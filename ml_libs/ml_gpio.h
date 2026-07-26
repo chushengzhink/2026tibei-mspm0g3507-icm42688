@@ -1,0 +1,82 @@
+#ifndef ML_GPIO_H
+#define ML_GPIO_H
+
+#include "ml_board.h"
+
+typedef enum {
+    OUT = 0,
+    IN_UP,
+    IN_DOWN,
+    IN_FLOAT
+} GPIO_Mode_enum;
+
+typedef enum {
+    PA0 = IOMUX_PINCM1,
+    PA1 = IOMUX_PINCM2,
+    PA28 = IOMUX_PINCM3,
+    PA29 = IOMUX_PINCM4,
+    PA30 = IOMUX_PINCM5,
+    PA31 = IOMUX_PINCM6,
+    PA2 = IOMUX_PINCM7,
+    PA3 = IOMUX_PINCM8,
+    PA4 = IOMUX_PINCM9,
+    PA5 = IOMUX_PINCM10,
+    PA6 = IOMUX_PINCM11,
+    PB0 = IOMUX_PINCM12,
+    PB1 = IOMUX_PINCM13,
+    PA7 = IOMUX_PINCM14,
+    PB2 = IOMUX_PINCM15,
+    PB3 = IOMUX_PINCM16,
+    PB4 = IOMUX_PINCM17,
+    PB5 = IOMUX_PINCM18,
+    PA8 = IOMUX_PINCM19,
+    PA9 = IOMUX_PINCM20,
+    PA10 = IOMUX_PINCM21,
+    PA11 = IOMUX_PINCM22,
+    PB6 = IOMUX_PINCM23,
+    PB7 = IOMUX_PINCM24,
+    PB8 = IOMUX_PINCM25,
+    PB9 = IOMUX_PINCM26,
+    PB10 = IOMUX_PINCM27,
+    PB11 = IOMUX_PINCM28,
+    PB12 = IOMUX_PINCM29,
+    PB13 = IOMUX_PINCM30,
+    PB14 = IOMUX_PINCM31,
+    PB15 = IOMUX_PINCM32,
+    PB16 = IOMUX_PINCM33,
+    PA12 = IOMUX_PINCM34,
+    PA13 = IOMUX_PINCM35,
+    PA14 = IOMUX_PINCM36,
+    PA15 = IOMUX_PINCM37,
+    PA16 = IOMUX_PINCM38,
+    PA17 = IOMUX_PINCM39,
+    PA18 = IOMUX_PINCM40,
+    PA19 = IOMUX_PINCM41,
+    PA20 = IOMUX_PINCM42,
+    PB17 = IOMUX_PINCM43,
+    PB18 = IOMUX_PINCM44,
+    PB19 = IOMUX_PINCM45,
+    PA21 = IOMUX_PINCM46,
+    PA22 = IOMUX_PINCM47,
+    PB20 = IOMUX_PINCM48,
+    PB21 = IOMUX_PINCM49,
+    PB22 = IOMUX_PINCM50,
+    PB23 = IOMUX_PINCM51,
+    PB24 = IOMUX_PINCM52,
+    PA23 = IOMUX_PINCM53,
+    PA24 = IOMUX_PINCM54,
+    PA25 = IOMUX_PINCM55,
+    PB25 = IOMUX_PINCM56,
+    PB26 = IOMUX_PINCM57,
+    PB27 = IOMUX_PINCM58,
+    PA26 = IOMUX_PINCM59,
+    PA27 = IOMUX_PINCM60
+} GPIOn_enum;
+
+ml_status_t gpio_init(
+    GPIO_Regs *gpio, uint32_t pins, GPIOn_enum gpion, GPIO_Mode_enum mode);
+void gpio_set(GPIO_Regs *gpio, uint32_t pins, uint8_t status);
+void gpio_toggle(GPIO_Regs *gpio, uint32_t pins);
+uint8_t gpio_get(GPIO_Regs *gpio, uint32_t pins);
+
+#endif

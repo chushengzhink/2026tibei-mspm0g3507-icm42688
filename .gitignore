@@ -1,0 +1,17 @@
+# Keil build output
+user/Objects/
+user/Listings/
+
+# Keil and debugger user state
+JLinkLog.txt
+JLinkSettings.ini
+*.uvguix.*
+*.uvoptx
+
+# Temporary and operating-system files
+*.tmp
+*.temp
+*.bak
+~$*
+Thumbs.db
+.DS_Store
