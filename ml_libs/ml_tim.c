@@ -66,14 +66,24 @@ ml_status_t tim_interrupt_ms_init_ex(GPTIMER_Regs *timer, uint32_t time_ms,
     clock_config.prescale = divider - 1U;
 
     timer_config.period = period - 1U;
-    timer_config.timerMode = DL_TIMER_TIMER_MODE_PERIODIC_UP;
-    timer_config.startTimer = DL_TIMER_START;
+    timer_config.timerMode = DL_TIMER_TIMER_MODE_PERIODIC;
+    timer_config.startTimer = DL_TIMER_STOP;
+    timer_config.genIntermInt = DL_TIMER_INTERM_INT_DISABLED;
+    timer_config.counterVal = 0U;
 
     DL_TimerG_reset(timer);
     DL_TimerG_enablePower(timer);
+    delay_cycles(16U);
+    if (!DL_TimerG_isPowerEnabled(timer)) {
+        return ML_STATUS_TIMEOUT;
+    }
     DL_TimerG_setClockConfig(timer, &clock_config);
     DL_TimerG_initTimerMode(timer, &timer_config);
-    DL_TimerG_enableInterrupt(timer, DL_TIMERG_INTERRUPT_LOAD_EVENT);
+    DL_TimerG_enableInterrupt(timer, DL_TIMERG_INTERRUPT_ZERO_EVENT);
+    DL_TimerG_enableClock(timer);
+    if (!DL_TimerG_isClockEnabled(timer)) {
+        return ML_STATUS_TIMEOUT;
+    }
 
     state->callback = callback;
     state->context = context;
@@ -81,7 +91,13 @@ ml_status_t tim_interrupt_ms_init_ex(GPTIMER_Regs *timer, uint32_t time_ms,
     NVIC_ClearPendingIRQ(state->irq);
     NVIC_SetPriority(state->irq, priority);
     NVIC_EnableIRQ(state->irq);
-    DL_TimerG_enableClock(timer);
+    DL_TimerG_startCounter(timer);
+    if (!DL_TimerG_isRunning(timer)) {
+        NVIC_DisableIRQ(state->irq);
+        state->callback = 0;
+        state->context = 0;
+        return ML_STATUS_TIMEOUT;
+    }
 
     return ML_STATUS_OK;
 }
@@ -91,7 +107,7 @@ void tim_irq_dispatch(GPTIMER_Regs *timer)
     tim_state_t *state = tim_find_state(timer);
 
     if ((state != 0) &&
-        (DL_TimerG_getPendingInterrupt(timer) == DL_TIMER_IIDX_LOAD) &&
+        (DL_TimerG_getPendingInterrupt(timer) == DL_TIMERG_IIDX_ZERO) &&
         (state->callback != 0)) {
         state->callback(state->context);
     }

@@ -480,6 +480,16 @@
               <FileType>5</FileType>
               <FilePath>..\code\robot_mission.h</FilePath>
             </File>
+            <File>
+              <FileName>imu_attitude.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\imu_attitude.c</FilePath>
+            </File>
+            <File>
+              <FileName>imu_attitude.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\imu_attitude.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -619,6 +629,26 @@
               <FileName>icm42688.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\ml_libs\icm42688.h</FilePath>
+            </File>
+            <File>
+              <FileName>FusionAhrs.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\ml_libs\FusionAhrs.c</FilePath>
+            </File>
+            <File>
+              <FileName>FusionAhrs.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\ml_libs\FusionAhrs.h</FilePath>
+            </File>
+            <File>
+              <FileName>FusionMath.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\ml_libs\FusionMath.h</FilePath>
+            </File>
+            <File>
+              <FileName>FusionConvention.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\ml_libs\FusionConvention.h</FilePath>
             </File>
             <File>
               <FileName>ml_exti.c</FileName>

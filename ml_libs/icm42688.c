@@ -9,6 +9,7 @@
 #define ICM42688_REG_PWR_MGMT0 (0x4EU)
 #define ICM42688_REG_GYRO_CONFIG0 (0x4FU)
 #define ICM42688_REG_ACCEL_CONFIG0 (0x50U)
+#define ICM42688_REG_GYRO_ACCEL_CONFIG0 (0x52U)
 #define ICM42688_REG_WHO_AM_I (0x75U)
 #define ICM42688_REG_BANK_SEL (0x76U)
 
@@ -16,6 +17,7 @@
 #define ICM42688_BANK_0 (0x00U)
 #define ICM42688_ACCEL_4G_100HZ (0x48U)
 #define ICM42688_GYRO_1000DPS_100HZ (0x28U)
+#define ICM42688_ACCEL_GYRO_25HZ_FILTER (0x55U)
 #define ICM42688_ACCEL_GYRO_LOW_NOISE (0x0FU)
 
 #define ICM42688_ACCEL_SCALE_G (4.0f / 32768.0f)
@@ -61,6 +63,19 @@ static int16_t icm42688_decode_int16(const uint8_t *bytes)
     return (int16_t) value;
 }
 
+static ml_status_t icm42688_verify_register(
+    uint8_t reg, uint8_t expected, uint8_t mask)
+{
+    uint8_t actual = 0U;
+    ml_status_t status = icm42688_read_registers(reg, &actual, 1U);
+
+    if (status != ML_STATUS_OK) {
+        return status;
+    }
+    return ((actual & mask) == (expected & mask)) ?
+        ML_STATUS_OK : ML_STATUS_UNSUPPORTED;
+}
+
 ml_status_t icm42688_init(void)
 {
     uint8_t who_am_i = 0U;
@@ -101,12 +116,37 @@ ml_status_t icm42688_init(void)
     if (status != ML_STATUS_OK) {
         return status;
     }
+    status = icm42688_write_register(ICM42688_REG_GYRO_ACCEL_CONFIG0,
+        ICM42688_ACCEL_GYRO_25HZ_FILTER);
+    if (status != ML_STATUS_OK) {
+        return status;
+    }
+    status = icm42688_verify_register(ICM42688_REG_ACCEL_CONFIG0,
+        ICM42688_ACCEL_4G_100HZ, 0xEFU);
+    if (status != ML_STATUS_OK) {
+        return status;
+    }
+    status = icm42688_verify_register(ICM42688_REG_GYRO_CONFIG0,
+        ICM42688_GYRO_1000DPS_100HZ, 0xEFU);
+    if (status != ML_STATUS_OK) {
+        return status;
+    }
+    status = icm42688_verify_register(ICM42688_REG_GYRO_ACCEL_CONFIG0,
+        ICM42688_ACCEL_GYRO_25HZ_FILTER, 0xFFU);
+    if (status != ML_STATUS_OK) {
+        return status;
+    }
     status = icm42688_write_register(
         ICM42688_REG_PWR_MGMT0, ICM42688_ACCEL_GYRO_LOW_NOISE);
     if (status != ML_STATUS_OK) {
         return status;
     }
     delay_ms(50U);
+    status = icm42688_verify_register(ICM42688_REG_PWR_MGMT0,
+        ICM42688_ACCEL_GYRO_LOW_NOISE, 0x3FU);
+    if (status != ML_STATUS_OK) {
+        return status;
+    }
 
     g_icm42688_initialized = true;
     return ML_STATUS_OK;
