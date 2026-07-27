@@ -1,7 +1,7 @@
 ﻿# 天猛星 MSPM0G3507 激光绘图小车
 本工程面向立创天猛星 TI MSPM0G3507 核心板及配套扩展板，使用 ARM Compiler 5.06 和手动外设初始化。当前固件已经接入 MAIXCAM PRO 数字识别、串口屏按钮启动、LF04 四路红外循迹、双电机编码器闭环、差速绘圆、OLED 状态显示、中键启动/急停和返回停车区；不使用 MPU6050，也不控制外部激光电源。逐脚接线和安全上电顺序见 `WIRING.md`，状态机、标定步骤和故障码见 `ROBOT_SETUP.md`。
 
-> 当前 `user/main.c` 是 ICM42688 姿态解算独立演示入口，不启动小车任务状态机；小车任务模块仍保留在工程中，后续可通过 `imu_attitude.h` 接入，但本次不参与运动控制。
+> 当前 `user/main.c` 是 ICM42688 姿态解算独立演示入口，不启动小车任务状态机；小车任务模块仍保留在工程中，后续可通过 `icm42688_service.h` 接入，但本次不参与运动控制。
 
 ## 启动与当前入口
 
@@ -9,11 +9,11 @@
 
 ```text
 Reset_Handler -> ARMCC __main -> main -> system_init
-              -> ICM42688 init -> gyro calibration -> attitude loop
+              -> ICM42688 service -> gyro calibration -> attitude loop
 ```
 
 - `system_init()` 复位并使能 GPIOA/GPIOB，使用 SYSOSC 驱动 SYSPLL，将 MCLK 配置为 80 MHz。
-- 当前入口初始化 OLED、ICM42688、姿态模块和 TIMG8 毫秒时基，完成静止校准后持续显示 Pitch/Roll/Yaw。
+- 当前入口初始化 OLED 和 ICM42688 姿态服务；服务内部管理传感器、姿态算法、TIMG8 毫秒时基与静止校准，完成后持续输出 Pitch/Roll/Yaw。
 - `robot_mission_init()` 及原有小车任务代码仍参与编译，但当前 `main()` 不调用它；恢复任务入口时需自行决定姿态数据如何接入运动控制。
 - LED1 阳极经 1 kΩ 限流电阻连接 3.3 V，阴极连接 PB14，因此 PB14 低电平点亮、高电平熄灭。
 - 核心板 LED 位于 PB22，但 PB22 同时连接 `IMU_MOSI`，因此不作为默认 LED。
@@ -44,9 +44,33 @@ Reset_Handler -> ARMCC __main -> main -> system_init
 - 上电后保持模块静止约 3 秒。程序连续收集 300 个 100 Hz 样本，检测到移动会清零进度并重新校准。
 - 校准只估计三轴陀螺仪零偏；Pitch/Roll 使用平均重力方向初始化，不把单一姿态误当作完整的三轴加速度计零偏标定。
 - ICM42688 使用 `±4 g`、`±1000 dps`、100 Hz，并将二阶 UI 低通滤波带宽显式配置为约 25 Hz。姿态解算采用六轴 AHRS，OLED 每约 100 ms 更新一次 Pitch、Roll、Yaw。
-- 车体坐标为 NWU：X 指向车头、Y 指向左侧、Z 指向上方。本车模块实际为传感器 `+Y` 向车头、`+X` 向左，因此右手系 `+Z` 向下；`g_body_axis_config` 已配置为 `车体X←+传感器Y、车体Y←+传感器X、车体Z←-传感器Z`。
+- 车体坐标为 NWU：X 指向车头、Y 指向左侧、Z 指向上方。本车模块实际为传感器 `+Y` 向车头、`+X` 向左，因此右手系 `+Z` 向下；`g_icm42688_service_config` 已配置为 `车体X←+传感器Y、车体Y←+传感器X、车体Z←-传感器Z`。
 - Yaw 在校准完成时置 0，表示上电后的相对航向，范围为 `-180°~180°`。六轴器件没有磁力计，静止零偏只能减小漂移，不能提供绝对航向或消除长期温漂。
 - 姿态算法基于固定提交 `015d68494274b479b5996bff2530ecbcfdc266f2` 的 x-io Fusion，MIT 许可证保存在 `ml_libs/FUSION_LICENSE.md`。
+
+### 模块分层与调用
+
+- `icm42688.c/.h`：负责 I²C 寄存器配置和六轴物理量读取。
+- `imu_attitude.c/.h`：负责轴映射、陀螺仪零偏校准和 Fusion 姿态解算。
+- `icm42688_service.c/.h`：负责 TIMG8 时基、100 Hz 非阻塞调度、校准状态和读取错误恢复。
+- `main.c`：只根据服务事件刷新 OLED，不直接读取传感器或调用 Fusion。
+
+最小调用方式：
+
+```c
+icm42688_service_t service;
+icm42688_service_output_t output;
+
+__enable_irq();
+status = icm42688_service_init(&service, &config);
+while (status == ML_STATUS_OK) {
+    icm42688_service_event_t event =
+        icm42688_service_poll(&service, &output);
+    if (event == ICM42688_SERVICE_EVENT_ANGLES_UPDATED) {
+        /* output.angles.pitch_deg / roll_deg / yaw_deg */
+    }
+}
+```
 
 ## 其他网表网络
 
