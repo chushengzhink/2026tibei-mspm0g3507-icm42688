@@ -4,6 +4,8 @@
 #include <stdint.h>
 
 #include "ml_common.h"
+#include "ml_encoder.h"
+#include "ml_motor_driver.h"
 
 ml_status_t motor_init(void);
 ml_status_t motorA_duty(int32_t duty);

@@ -30,7 +30,9 @@
 #define ROBOT_VELOCITY_KP                 (2800.0f)
 #define ROBOT_VELOCITY_KI                 (220.0f)
 #define ROBOT_VELOCITY_KD                 (0.0f)
-#define ROBOT_MOTOR_FEEDFORWARD           (9000.0f)
+#define ROBOT_MOTOR_FEEDFORWARD           (6000.0f)
+#define ROBOT_PID_OUTPUT_LIMIT            (11500.0f)
+#define ROBOT_PID_INTEGRAL_LIMIT          (5750.0f)
 
 #define ROBOT_MISSION_TIMEOUT_TICKS       (17000UL)
 #define ROBOT_VISION_TIMEOUT_TICKS        (800UL)

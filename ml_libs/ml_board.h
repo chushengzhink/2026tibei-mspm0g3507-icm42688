@@ -181,6 +181,7 @@
 
 #define ML_MOTOR_PWM_FREQUENCY_HZ        (1000U)
 #define ML_PWM_DUTY_MAX                  (50000UL)
+#define ML_MOTOR_DUTY_LIMIT              (17500UL) /* 35% safety cap */
 #define ML_PWM_TIMG0_CH0_PORT            GPIOA
 #define ML_PWM_TIMG0_CH0_PIN             DL_GPIO_PIN_12
 #define ML_PWM_TIMG0_CH0_IOMUX           IOMUX_PINCM34

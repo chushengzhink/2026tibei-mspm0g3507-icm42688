@@ -2,11 +2,7 @@
 
 #include <float.h>
 
-#include "ml_board.h"
-#include "ml_motor.h"
-
-pid_t motorA;
-pid_t motorB;
+#define PID_DEFAULT_OUTPUT_LIMIT (50000.0f)
 
 static float pid_clamp(float value, float minimum, float maximum)
 {
@@ -47,10 +43,10 @@ ml_status_t pid_init(
     pid->dout = 0.0f;
     pid->out = 0.0f;
     pid->pid_mode = mode;
-    pid->output_min = -(float) ML_PWM_DUTY_MAX;
-    pid->output_max = (float) ML_PWM_DUTY_MAX;
-    pid->integral_min = -(float) ML_PWM_DUTY_MAX;
-    pid->integral_max = (float) ML_PWM_DUTY_MAX;
+    pid->output_min = -PID_DEFAULT_OUTPUT_LIMIT;
+    pid->output_max = PID_DEFAULT_OUTPUT_LIMIT;
+    pid->integral_min = -PID_DEFAULT_OUTPUT_LIMIT;
+    pid->integral_max = PID_DEFAULT_OUTPUT_LIMIT;
     pid->initialized = true;
     return ML_STATUS_OK;
 }
@@ -158,42 +154,4 @@ ml_status_t pidout_limit(pid_t *pid)
     }
     pid->out = pid_clamp(pid->out, pid->output_min, pid->output_max);
     return ML_STATUS_OK;
-}
-
-void motor_target_set(int spe1, int spe2)
-{
-    motorA.target = (float) spe1;
-    motorB.target = (float) spe2;
-}
-
-ml_status_t pid_control(void)
-{
-    int32_t count1;
-    int32_t count2;
-    ml_status_t status;
-
-    if (!motorA.initialized || !motorB.initialized) {
-        return ML_STATUS_NOT_INITIALIZED;
-    }
-    status = encoder_get_and_clear(&count1, &count2);
-
-    if (status != ML_STATUS_OK) {
-        return status;
-    }
-    motorA.now = (float) count1;
-    motorB.now = (float) count2;
-
-    status = pid_cal(&motorA);
-    if (status == ML_STATUS_OK) {
-        status = pid_cal(&motorB);
-    }
-    if (status == ML_STATUS_OK) {
-        status = motorA_duty((int32_t) pid_clamp(motorA.out,
-            -(float) ML_PWM_DUTY_MAX, (float) ML_PWM_DUTY_MAX));
-    }
-    if (status == ML_STATUS_OK) {
-        status = motorB_duty((int32_t) pid_clamp(motorB.out,
-            -(float) ML_PWM_DUTY_MAX, (float) ML_PWM_DUTY_MAX));
-    }
-    return status;
 }

@@ -1,9 +1,9 @@
 #include "robot_config.h"
 
 /*
- * MG310 theoretical starting point for the current 1x decoder:
- * 13 PPR * 20:1 gearbox = 260 phase-A falling edges per wheel revolution.
- * With the nominal 48 mm wheel, PI * 48 / 260 = 0.57999 mm/tick.
+ * MG513X theoretical starting point for the current 1x decoder:
+ * 13 PPR * 28:1 gearbox = 364 phase-A falling edges per wheel revolution.
+ * With the nominal 65 mm wheel, PI * 65 / 364 = 0.560999 mm/tick.
  * Replace the independent left/right values, sensor_to_axle_mm and all
  * correction gains with measurements from the finished car before scored runs.
  */
@@ -18,8 +18,8 @@ static const circle_calibration_point_t g_circle_points[] = {
 };
 
 const robot_calibration_t g_robot_calibration = {
-    0.57999f,
-    0.57999f,
+    0.560999f,
+    0.560999f,
     128.6f,
     100.0f,
     1.0000f,

@@ -421,6 +421,16 @@
               <FilePath>..\code\pid.h</FilePath>
             </File>
             <File>
+              <FileName>motor_velocity.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\motor_velocity.c</FilePath>
+            </File>
+            <File>
+              <FileName>motor_velocity.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\motor_velocity.h</FilePath>
+            </File>
+            <File>
               <FileName>robot_config.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\code\robot_config.c</FilePath>
@@ -471,6 +481,16 @@
               <FilePath>..\code\motion_control.h</FilePath>
             </File>
             <File>
+              <FileName>motion_engine.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\motion_engine.c</FilePath>
+            </File>
+            <File>
+              <FileName>motion_engine.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\motion_engine.h</FilePath>
+            </File>
+            <File>
               <FileName>robot_mission.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\code\robot_mission.c</FilePath>
@@ -479,6 +499,36 @@
               <FileName>robot_mission.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\code\robot_mission.h</FilePath>
+            </File>
+            <File>
+              <FileName>mission_sequence.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\mission_sequence.c</FilePath>
+            </File>
+            <File>
+              <FileName>mission_sequence.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\mission_sequence.h</FilePath>
+            </File>
+            <File>
+              <FileName>robot_input.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\robot_input.c</FilePath>
+            </File>
+            <File>
+              <FileName>robot_input.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\robot_input.h</FilePath>
+            </File>
+            <File>
+              <FileName>mission_view.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\mission_view.c</FilePath>
+            </File>
+            <File>
+              <FileName>mission_view.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\mission_view.h</FilePath>
             </File>
             <File>
               <FileName>imu_attitude.c</FileName>
@@ -499,6 +549,26 @@
               <FileName>icm42688_service.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\code\icm42688_service.h</FilePath>
+            </File>
+            <File>
+              <FileName>attitude_view.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\attitude_view.c</FilePath>
+            </File>
+            <File>
+              <FileName>attitude_view.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\attitude_view.h</FilePath>
+            </File>
+            <File>
+              <FileName>attitude_app.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\attitude_app.c</FilePath>
+            </File>
+            <File>
+              <FileName>attitude_app.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\attitude_app.h</FilePath>
             </File>
           </Files>
         </Group>
@@ -669,6 +739,26 @@
               <FileName>ml_exti.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\ml_libs\ml_exti.h</FilePath>
+            </File>
+            <File>
+              <FileName>ml_motor_driver.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\ml_libs\ml_motor_driver.c</FilePath>
+            </File>
+            <File>
+              <FileName>ml_motor_driver.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\ml_libs\ml_motor_driver.h</FilePath>
+            </File>
+            <File>
+              <FileName>ml_encoder.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\ml_libs\ml_encoder.c</FilePath>
+            </File>
+            <File>
+              <FileName>ml_encoder.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\ml_libs\ml_encoder.h</FilePath>
             </File>
             <File>
               <FileName>ml_motor.c</FileName>

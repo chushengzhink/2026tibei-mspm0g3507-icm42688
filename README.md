@@ -9,11 +9,13 @@
 
 ```text
 Reset_Handler -> ARMCC __main -> main -> system_init
-              -> ICM42688 service -> gyro calibration -> attitude loop
+              -> attitude_app -> ICM42688 service -> attitude loop
+                              -> attitude_view -> OLED
 ```
 
 - `system_init()` 复位并使能 GPIOA/GPIOB，使用 SYSOSC 驱动 SYSPLL，将 MCLK 配置为 80 MHz。
-- 当前入口初始化 OLED 和 ICM42688 姿态服务；服务内部管理传感器、姿态算法、TIMG8 毫秒时基与静止校准，完成后持续输出 Pitch/Roll/Yaw。
+- `main()` 只完成系统初始化、开启中断并轮询 `attitude_app`；应用模块管理 ICM42688 服务事件和刷新节流，`attitude_view` 独立负责 OLED 页面。
+- ICM42688 服务内部管理传感器、姿态算法、TIMG8 毫秒时基与静止校准，完成后持续输出 Pitch/Roll/Yaw。
 - `robot_mission_init()` 及原有小车任务代码仍参与编译，但当前 `main()` 不调用它；恢复任务入口时需自行决定姿态数据如何接入运动控制。
 - LED1 阳极经 1 kΩ 限流电阻连接 3.3 V，阴极连接 PB14，因此 PB14 低电平点亮、高电平熄灭。
 - 核心板 LED 位于 PB22，但 PB22 同时连接 `IMU_MOSI`，因此不作为默认 LED。
@@ -44,7 +46,7 @@ Reset_Handler -> ARMCC __main -> main -> system_init
 - 上电后保持模块静止约 3 秒。程序连续收集 300 个 100 Hz 样本，检测到移动会清零进度并重新校准。
 - 校准只估计三轴陀螺仪零偏；Pitch/Roll 使用平均重力方向初始化，不把单一姿态误当作完整的三轴加速度计零偏标定。
 - ICM42688 使用 `±4 g`、`±1000 dps`、100 Hz，并将二阶 UI 低通滤波带宽显式配置为约 25 Hz。姿态解算采用六轴 AHRS，OLED 每约 100 ms 更新一次 Pitch、Roll、Yaw。
-- 车体坐标为 NWU：X 指向车头、Y 指向左侧、Z 指向上方。本车模块实际为传感器 `+Y` 向车头、`+X` 向左，因此右手系 `+Z` 向下；`g_icm42688_service_config` 已配置为 `车体X←+传感器Y、车体Y←+传感器X、车体Z←-传感器Z`。
+- 车体坐标为 NWU：X 指向车头、Y 指向左侧、Z 指向上方。本车模块实际为传感器 `+Y` 向车头、`+X` 向左，因此右手系 `+Z` 向下；`g_attitude_service_config` 已配置为 `车体X←+传感器Y、车体Y←+传感器X、车体Z←-传感器Z`。
 - Yaw 在校准完成时置 0，表示上电后的相对航向，范围为 `-180°~180°`。六轴器件没有磁力计，静止零偏只能减小漂移，不能提供绝对航向或消除长期温漂。
 - 姿态算法基于固定提交 `015d68494274b479b5996bff2530ecbcfdc266f2` 的 x-io Fusion，MIT 许可证保存在 `ml_libs/FUSION_LICENSE.md`。
 
@@ -53,7 +55,16 @@ Reset_Handler -> ARMCC __main -> main -> system_init
 - `icm42688.c/.h`：负责 I²C 寄存器配置和六轴物理量读取。
 - `imu_attitude.c/.h`：负责轴映射、陀螺仪零偏校准和 Fusion 姿态解算。
 - `icm42688_service.c/.h`：负责 TIMG8 时基、100 Hz 非阻塞调度、校准状态和读取错误恢复。
-- `main.c`：只根据服务事件刷新 OLED，不直接读取传感器或调用 Fusion。
+- `attitude_view.c/.h`：负责校准、角度和错误页面，不参与传感器或任务状态处理。
+- `attitude_app.c/.h`：持有服务上下文、处理事件并将显示刷新限制在约 10 Hz。
+- `main.c`：只负责平台启动与应用轮询。
+
+### 固件分层
+
+- `ml_libs` 驱动层只处理芯片外设和具体器件；新代码使用精确头文件，`headfile.h` 仅为旧代码保留。
+- `motion_engine` 是不访问硬件的运动状态引擎；`motion_control` 负责 10 ms 线路采样、20 ms 编码器/速度闭环和安全停止适配。
+- `mission_sequence` 是不访问硬件的任务状态机；`robot_input` 处理按键和串口，`mission_view` 处理 OLED，`robot_mission` 只负责初始化和命令编排。
+- 小车模块继续参与编译，但默认入口仍为独立姿态演示，不调用 `robot_mission_init()`。
 
 最小调用方式：
 
@@ -121,15 +132,16 @@ while (status == ML_STATUS_OK) {
 - EXTI 同时支持 PA0-PA27 与 PB0-PB27；共享 `GROUP1_IRQHandler` 会分别处理 GPIOA 和 GPIOB 的全部待处理中断。
 - UART RX 使用 64 字节环形缓冲区；满时丢弃新字节并累计溢出次数。
 - 电机初始化先设置四个方向脚和两个 PWM 通道为安全零输出，接通电机电源前应先完成空载波形检查。
- - 编码器计数为 `volatile int32_t`，应用应使用 `encoder_get_and_clear()` 原子读取并清零。当前驱动在 A 相下降沿 1×计数；MG310 的 13 PPR、1:20 减速比对应 260 tick/轮圈，48 mm 名义轮径的理论值为 0.57999 mm/tick，正式运行仍以左右轮实测值为准。
- - 扩展板电源按三条电源轨使用：12 V 给 TB6612 `VM`/电机，5 V 给核心板逻辑、OLED 和 TB6612 `VCC/STBY`，3.3 V 飞线给 LF04 与编码器；不要把单一电压同时接到所有端子。
+- 电机代码分为三层：`ml_motor_driver` 负责 TB6612 的 PWM/方向输出，`ml_encoder` 负责两路霍尔计数，`motor_velocity` 负责双轮 PID 和前馈；旧的 `motorA_duty()`、`motorB_duty()`、`encoder_get_and_clear()` 接口保留为兼容包装。
+- 编码器计数为 `volatile int32_t`，应用应使用 `encoder_get_and_clear()` 原子读取并清零。当前驱动在 A 相下降沿 1×计数；MG513X 的 13 PPR、1:28 减速比对应 364 tick/轮圈，65 mm 名义轮径的理论值为 0.560999 mm/tick，正式运行仍以左右轮实测值为准。
+- 扩展板电源按三条电源轨使用：12 V 给 TB6612 `VM`/电机，5 V 给核心板逻辑、OLED 和 TB6612 `VCC/STBY`，3.3 V 飞线给 LF04 与编码器；不要把单一电压同时接到所有端子。
 
 ## 构建与验收
 
 全量构建命令：
 
 ```text
-F:\\xinkil\\UV4\\UV4.exe -r user\\project.uvprojx -j0
+D:\\Keil_v5\\UV4\\UV4.exe -r user\\project.uvprojx -j0
 ```
 
 提交前应确认：
