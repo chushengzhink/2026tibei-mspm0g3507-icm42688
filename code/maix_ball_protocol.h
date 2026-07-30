@@ -4,14 +4,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define MAIX_BALL_BODY_SIZE  (16U)
-#define MAIX_BALL_DATA_SIZE  (20U)
-#define MAIX_BALL_FRAME_SIZE (28U)
+#define MAIX_BALL_BODY_SIZE  (20U)
+#define MAIX_BALL_DATA_SIZE  (24U)
+#define MAIX_BALL_FRAME_SIZE (32U)
 
 typedef struct {
     uint32_t capture_ms;
     int16_t center_x_px;
     int16_t center_y_px;
+    float position_cm;
     float score;
     bool valid;
 } maix_ball_measurement_t;

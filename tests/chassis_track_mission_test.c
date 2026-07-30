@@ -79,7 +79,7 @@ static void test_start_and_route_geometry(void)
               5919.0f, 0.001f),
         "calibrated approach and braking thresholds are exact");
     check(near_value(g_chassis_track_default_config.
-              finish_alignment_tolerance_deg, 2.0f, 0.001f) &&
+              finish_alignment_tolerance_deg, 1.0f, 0.001f) &&
         near_value(g_chassis_track_default_config.
               finish_alignment_heading_bias_deg, 37.0f, 0.001f) &&
         near_value(g_chassis_track_default_config.
@@ -88,7 +88,7 @@ static void test_start_and_route_geometry(void)
             3000U &&
         g_chassis_track_default_config.finish_alignment_confirm_cycles ==
             3U,
-        "finish alignment uses the calibrated 37-degree safety window");
+        "finish alignment uses the calibrated one-degree safety window");
     check(near_value(g_chassis_track_default_config.
               straight_cruise_speed_mm_s,
               TEST_STRAIGHT_CRUISE_MM_S, 0.001f) &&
@@ -262,9 +262,9 @@ static void test_dual_finish_gate(void)
         mission.stop_time_ms == 0U,
         "third braking stop cycle starts positive alignment from 389 degrees");
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 395.0f, 360U, false, &output);
+        finish_reference, 0.0f, 0.0f, 396.0f, 360U, false, &output);
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 399.0f, 380U, false, &output);
+        finish_reference, 0.0f, 0.0f, 398.0f, 380U, false, &output);
     check(!output.finished && mission.alignment_confirm_cycles == 2U,
         "alignment requires three new in-window stopped cycles");
     (void) chassis_track_mission_update(&mission,
@@ -359,16 +359,16 @@ static void test_nonzero_start_heading_reference(void)
         near_value(output.heading_error_deg, 10.0f, 0.02f),
         "nonzero start heading drives toward the biased target positively");
 
-    enter_alignment_from_start(&mission, 47.0f, 442.0f, &output);
+    enter_alignment_from_start(&mission, 47.0f, 443.0f, &output);
     check(mission.alignment_confirm_cycles == 1U &&
-        near_value(output.heading_error_deg, 2.0f, 0.02f),
-        "biased target negative two-degree boundary is included");
+        near_value(output.heading_error_deg, 1.0f, 0.02f),
+        "biased target negative one-degree boundary is included");
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 446.0f,
+        finish_reference, 0.0f, 0.0f, 445.0f,
         180U, false, &output);
     check(mission.alignment_confirm_cycles == 2U &&
-        near_value(output.heading_error_deg, -2.0f, 0.02f),
-        "biased target positive two-degree boundary is included");
+        near_value(output.heading_error_deg, -1.0f, 0.02f),
+        "biased target positive one-degree boundary is included");
     (void) chassis_track_mission_update(&mission,
         finish_reference, 0.0f, 0.0f, 444.0f,
         200U, false, &output);
@@ -400,14 +400,14 @@ static void test_alignment_direction_window_and_stop_confirmation(void)
         near_value(output.angular_rad_s, 0.35f, 0.001f),
         "360 degrees starts limited positive biased alignment");
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 395.0f,
+        finish_reference, 0.0f, 0.0f, 396.0f,
         180U, false, &output);
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 399.0f,
+        finish_reference, 0.0f, 0.0f, 398.0f,
         200U, false, &output);
     check(mission.alignment_confirm_cycles == 2U &&
         near_value(output.angular_rad_s, 0.0f, 0.001f),
-        "395 and 399 degree boundaries are inside the alignment window");
+        "396 and 398 degree boundaries are inside the alignment window");
     (void) chassis_track_mission_update(&mission,
         finish_reference, 0.0f, 20.0f, 397.0f,
         220U, false, &output);
@@ -417,23 +417,29 @@ static void test_alignment_direction_window_and_stop_confirmation(void)
         finish_reference, 0.0f, 0.0f, 397.0f,
         240U, false, &output);
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 394.9f,
+        finish_reference, 0.0f, 0.0f, 395.99f,
         260U, false, &output);
     check(mission.alignment_confirm_cycles == 0U &&
         output.angular_rad_s > 0.0f,
-        "leaving the two-degree window restarts heading correction");
+        "395.99 degrees restarts positive heading correction");
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 395.0f,
+        finish_reference, 0.0f, 0.0f, 398.01f,
         280U, false, &output);
+    check(mission.alignment_confirm_cycles == 0U &&
+        output.angular_rad_s < 0.0f,
+        "398.01 degrees restarts negative heading correction");
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 399.0f,
+        finish_reference, 0.0f, 0.0f, 396.0f,
         300U, false, &output);
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 397.0f,
+        finish_reference, 0.0f, 0.0f, 398.0f,
         320U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 397.0f,
+        340U, false, &output);
     check(output.finished && output.state == CHASSIS_TRACK_COMPLETE &&
-        mission.stop_time_ms == 320U &&
-        near_value(output.elapsed_s, 0.220f, 0.0001f),
+        mission.stop_time_ms == 340U &&
+        near_value(output.elapsed_s, 0.240f, 0.0001f),
         "third aligned stopped cycle records the final lap time");
 }
 
@@ -556,17 +562,53 @@ static void test_latest_alignment_bias_replay(void)
         "old 359-degree finish cannot complete the biased alignment");
 
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 395.03f,
+        finish_reference, 0.0f, 0.0f, 396.03f,
         200U, false, &output);
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 399.03f,
+        finish_reference, 0.0f, 0.0f, 398.03f,
         220U, false, &output);
     (void) chassis_track_mission_update(&mission,
         finish_reference, 0.0f, 0.0f, 397.03f,
         240U, false, &output);
     check(output.finished && output.command_stop &&
         near_value(output.heading_progress_deg, 397.0f, 0.02f),
-        "395 through 399 degrees complete after three stopped cycles");
+        "396 through 398 degrees complete after three stopped cycles");
+}
+
+static void test_latest_tight_alignment_replay(void)
+{
+    chassis_track_mission_t mission = {0};
+    chassis_track_output_t output;
+    float finish_reference = g_chassis_track_default_config.
+        finish_reference_progress_mm;
+
+    enter_alignment_from_start(&mission, 0.01f, 385.12f, &output);
+    check(output.state == CHASSIS_TRACK_ALIGNING &&
+        output.angular_rad_s > 0.0f &&
+        near_value(output.heading_error_deg, 11.89f, 0.02f),
+        "latest CSV first stop still turns right toward 397 degrees");
+
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 398.71f,
+        180U, false, &output);
+    check(!output.finished &&
+        mission.alignment_confirm_cycles == 0U &&
+        near_value(output.heading_error_deg, -1.70f, 0.02f) &&
+        output.angular_rad_s < 0.0f,
+        "latest 398.71-degree overshoot must correct left");
+
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 396.01f,
+        200U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 398.01f,
+        220U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 397.01f,
+        240U, false, &output);
+    check(output.finished && output.command_stop &&
+        near_value(output.heading_progress_deg, 397.0f, 0.02f),
+        "latest replay completes only inside the one-degree window");
 }
 
 static void test_finish_reference_validation(void)
@@ -699,6 +741,7 @@ int main(void)
     test_alignment_time_over_pass_limit();
     test_latest_finish_replay();
     test_latest_alignment_bias_replay();
+    test_latest_tight_alignment_replay();
     test_finish_reference_validation();
     test_distance_limited_final_approach();
     test_stage_zero_lap_time_budget();

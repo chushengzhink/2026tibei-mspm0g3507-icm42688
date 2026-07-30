@@ -36,7 +36,7 @@ static void write_le32(uint8_t *data, uint32_t value)
 }
 
 static void queue_frame(uint32_t capture_ms, int16_t x, int16_t y,
-    float score, uint8_t valid)
+    float position_cm, float score, uint8_t valid)
 {
     uint8_t frame[MAIX_BALL_FRAME_SIZE];
     uint16_t crc;
@@ -53,10 +53,11 @@ static void queue_frame(uint32_t capture_ms, int16_t x, int16_t y,
     write_le32(&frame[10], capture_ms);
     write_le16(&frame[14], (uint16_t) x);
     write_le16(&frame[16], (uint16_t) y);
-    memcpy(&frame[18], &score, sizeof(score));
-    frame[22] = valid;
-    crc = maix_crc16_ibm(frame, 26U);
-    write_le16(&frame[26], crc);
+    memcpy(&frame[18], &position_cm, sizeof(position_cm));
+    memcpy(&frame[22], &score, sizeof(score));
+    frame[26] = valid;
+    crc = maix_crc16_ibm(frame, 30U);
+    write_le16(&frame[30], crc);
 
     assert((g_uart_tail + sizeof(frame)) <= sizeof(g_uart_bytes));
     for (i = 0U; i < sizeof(frame); ++i) {
@@ -71,22 +72,17 @@ static void advance_ms(uint32_t elapsed_ms)
     assert(g_tick_callback != 0);
     for (i = 0U; i < elapsed_ms; ++i) {
         g_tick_callback(g_tick_context);
+        ball_balance_process();
     }
 }
 
 static void advance_frame(uint32_t elapsed_ms, uint32_t capture_ms,
-    int16_t x, uint8_t valid)
+    float position_cm, uint8_t valid)
 {
     advance_ms(elapsed_ms);
-    queue_frame(capture_ms, x, 112, valid ? 0.9f : 0.0f, valid);
+    queue_frame(capture_ms, 0, 0, position_cm,
+        valid ? 0.9f : 0.0f, valid);
     ball_balance_process();
-}
-
-static int16_t x_for_cm(float cm)
-{
-    float x = 20.0f + (((cm + 12.0f) / 24.0f) * 280.0f);
-
-    return (int16_t) (x + 0.5f);
 }
 
 static void reset_controller(void)
@@ -103,11 +99,11 @@ static uint32_t make_vision_ready(void)
 {
     ball_balance_status_t status;
 
-    advance_frame(20U, 10U, x_for_cm(0.0f), 1U);
-    advance_frame(20U, 30U, x_for_cm(0.0f), 1U);
+    advance_frame(20U, 10U, 0.0f, 1U);
+    advance_frame(20U, 30U, 0.0f, 1U);
     assert(ball_balance_get_status(&status) == ML_STATUS_OK);
     assert(!status.vision_ready);
-    advance_frame(20U, 50U, x_for_cm(0.0f), 1U);
+    advance_frame(20U, 50U, 0.0f, 1U);
     assert(ball_balance_get_status(&status) == ML_STATUS_OK);
     assert(status.vision_ready);
     return 50U;
@@ -182,9 +178,11 @@ static void test_start_gate_timeout_and_abort(void)
     capture_ms = make_vision_ready();
     assert(ball_balance_start_pm5_sequence() == ML_STATUS_OK);
     assert(ball_balance_start_pm5_sequence() == ML_STATUS_BUSY);
-    advance_frame(20U, capture_ms += 20U, x_for_cm(2.0f), 1U);
+    advance_frame(20U, capture_ms += 20U, 2.0f, 1U);
     assert(ball_balance_get_status(&status) == ML_STATUS_OK);
-    assert(status.integral_cm_s > 0.0f);
+    assert(status.control_mode == BALL_CONTROL_CASCADE);
+    assert(status.target_velocity_cm_per_s > 0.0f);
+    assert(status.integral_cm_s == 0.0f);
     assert(ball_balance_abort_sequence() == ML_STATUS_OK);
     assert(ball_balance_get_status(&status) == ML_STATUS_OK);
     assert(status.sequence_state == BALL_SEQUENCE_ABORTED);
@@ -197,13 +195,90 @@ static void test_start_gate_timeout_and_abort(void)
     capture_ms = make_vision_ready();
     assert(ball_balance_start_pm5_sequence() == ML_STATUS_OK);
     for (i = 0U; i < 50U; ++i) {
-        advance_frame(100U, capture_ms += 100U, x_for_cm(0.0f), 1U);
+        advance_frame(100U, capture_ms += 100U, 0.0f, 1U);
     }
     assert(ball_balance_get_status(&status) == ML_STATUS_OK);
     assert(status.sequence_state == BALL_SEQUENCE_TIMEOUT);
     assert(status.sequence_elapsed_ms == 5000U);
     assert(!status.enabled);
     assert(status.servo_target_us == 1500U);
+}
+
+static void test_manual_range_speed_test_and_control_period(void)
+{
+    ball_balance_status_t status;
+    uint32_t capture_ms;
+
+    reset_controller();
+    assert(ball_balance_set_manual_servo_offset_us(-100) == ML_STATUS_OK);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.servo_target_us == 1400U);
+    assert(ball_balance_set_manual_servo_offset_us(-101) ==
+        ML_STATUS_INVALID_ARGUMENT);
+    assert(ball_balance_set_manual_servo_offset_us(100) == ML_STATUS_OK);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.servo_target_us == 1600U);
+    assert(ball_balance_set_manual_servo_offset_us(101) ==
+        ML_STATUS_INVALID_ARGUMENT);
+    assert(ball_balance_enable_speed_test(true) == ML_STATUS_BUSY);
+
+    capture_ms = make_vision_ready();
+    assert(ball_balance_enable_speed_test(true) == ML_STATUS_OK);
+    advance_frame(20U, capture_ms += 20U, 1.0f, 1U);
+    advance_ms(10U);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.control_mode == BALL_CONTROL_SPEED_TEST);
+    assert(status.target_velocity_cm_per_s == 0.0f);
+    assert(status.speed_error_cm_per_s < 0.0f);
+    assert(status.control_output_us < 0.0f);
+    assert(status.servo_target_us > 1500U);
+    assert(ball_balance_enable_speed_test(false) == ML_STATUS_OK);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.control_mode == BALL_CONTROL_DISABLED);
+    assert(status.control_output_us == 0.0f);
+    assert(status.servo_target_us == 1500U);
+
+    assert(ball_balance_set_target_cm(5.0f) == ML_STATUS_OK);
+    assert(ball_balance_enable(true) == ML_STATUS_OK);
+    advance_ms(9U);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.control_output_us == 0.0f);
+    advance_ms(1U);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.target_velocity_cm_per_s > 0.0f);
+    assert(status.control_output_us > 0.0f);
+    assert(status.servo_target_us < 1500U);
+}
+
+static void test_direct_centimeter_input_and_safety_gates(void)
+{
+    ball_balance_status_t status;
+
+    reset_controller();
+    advance_ms(20U);
+    queue_frame(10U, 300, 112, 2.0f, 0.9f, 1U);
+    ball_balance_process();
+    advance_ms(20U);
+    queue_frame(30U, 300, 112, 2.0f, 0.9f, 1U);
+    ball_balance_process();
+    advance_ms(20U);
+    queue_frame(50U, 300, 112, 2.0f, 0.9f, 1U);
+    ball_balance_process();
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.vision_ready);
+    assert(status.raw_center_x_px == 300);
+    assert(status.position_cm > 1.9f);
+
+    queue_frame(70U, 0, 0, 13.0f, 0.9f, 1U);
+    ball_balance_process();
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(!status.vision_ready);
+
+    reset_controller();
+    queue_frame(10U, 0, 0, 0.0f, 0.2f, 1U);
+    ball_balance_process();
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(!status.vision_ready);
 }
 
 static void test_vision_loss_and_reacquire(void)
@@ -223,11 +298,11 @@ static void test_vision_loss_and_reacquire(void)
     assert(status.integral_cm_s == 0.0f);
     assert(status.servo_target_us == 1500U);
 
-    advance_frame(20U, capture_ms += 20U, x_for_cm(0.0f), 1U);
-    advance_frame(20U, capture_ms += 20U, x_for_cm(0.0f), 1U);
+    advance_frame(20U, capture_ms += 20U, 0.0f, 1U);
+    advance_frame(20U, capture_ms += 20U, 0.0f, 1U);
     assert(ball_balance_get_status(&status) == ML_STATUS_OK);
     assert(!status.vision_ready);
-    advance_frame(20U, capture_ms += 20U, x_for_cm(0.0f), 1U);
+    advance_frame(20U, capture_ms += 20U, 0.0f, 1U);
     assert(ball_balance_get_status(&status) == ML_STATUS_OK);
     assert(status.vision_ready);
     assert(!status.enabled);
@@ -253,10 +328,10 @@ static void test_complete_sequence_and_hold(void)
     capture_ms = make_vision_ready();
     assert(ball_balance_start_pm5_sequence() == ML_STATUS_OK);
     for (i = 0U; i < (sizeof(plus_path) / sizeof(plus_path[0])); ++i) {
-        advance_frame(20U, capture_ms += 20U, x_for_cm(plus_path[i]), 1U);
+        advance_frame(20U, capture_ms += 20U, plus_path[i], 1U);
     }
     for (i = 0U; i < 80U; ++i) {
-        advance_frame(20U, capture_ms += 20U, x_for_cm(5.0f), 1U);
+        advance_frame(20U, capture_ms += 20U, 5.0f, 1U);
         assert(ball_balance_get_status(&status) == ML_STATUS_OK);
         if (status.sequence_state == BALL_SEQUENCE_TO_MINUS_5_CM) {
             break;
@@ -266,10 +341,10 @@ static void test_complete_sequence_and_hold(void)
     assert(fabsf(status.target_cm + 5.0f) < 0.01f);
 
     for (i = 0U; i < (sizeof(minus_path) / sizeof(minus_path[0])); ++i) {
-        advance_frame(20U, capture_ms += 20U, x_for_cm(minus_path[i]), 1U);
+        advance_frame(20U, capture_ms += 20U, minus_path[i], 1U);
     }
     for (i = 0U; i < 120U; ++i) {
-        advance_frame(20U, capture_ms += 20U, x_for_cm(-5.0f), 1U);
+        advance_frame(20U, capture_ms += 20U, -5.0f, 1U);
         assert(ball_balance_get_status(&status) == ML_STATUS_OK);
         if (status.sequence_state == BALL_SEQUENCE_COMPLETE) {
             break;
@@ -289,6 +364,8 @@ static void test_complete_sequence_and_hold(void)
 int main(void)
 {
     test_start_gate_timeout_and_abort();
+    test_manual_range_speed_test_and_control_period();
+    test_direct_centimeter_input_and_safety_gates();
     test_vision_loss_and_reacquire();
     test_complete_sequence_and_hold();
     printf("ball balance tests: PASS\n");

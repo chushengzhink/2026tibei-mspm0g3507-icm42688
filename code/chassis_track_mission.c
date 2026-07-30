@@ -38,7 +38,7 @@ const chassis_track_config_t g_chassis_track_default_config = {
     13.0f,
     360.0f,
     5.0f,
-    2.0f,
+    1.0f,
     37.0f,
     45.0f,
     4.0f,

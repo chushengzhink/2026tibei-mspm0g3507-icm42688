@@ -3,8 +3,9 @@
 #include <string.h>
 
 #include "ball_balance.h"
+#include "ball_balance_config.h"
 
-static const int16_t g_manual_offsets_us[] = {0, -50, 0, 50, 0};
+static const int16_t g_manual_offsets_us[] = {0, -100, 0, 100, 0};
 
 typedef struct {
     uint8_t next_step;
@@ -79,9 +80,13 @@ ml_status_t ball_demo_long_press(void)
     if (!status.vision_ready) {
         return ML_STATUS_BUSY;
     }
+#if BALL_CALIBRATION_SPEED_TEST
+    return ball_balance_enable_speed_test(true);
+#else
     result = ball_balance_set_target_cm(0.0f);
-    if (result == ML_STATUS_OK) {
-        result = ball_balance_enable(true);
+    if (result != ML_STATUS_OK) {
+        return result;
     }
-    return result;
+    return ball_balance_enable(true);
+#endif
 }

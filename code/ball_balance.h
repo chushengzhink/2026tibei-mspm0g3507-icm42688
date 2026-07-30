@@ -21,9 +21,16 @@ typedef enum {
     BALL_SEQUENCE_VISION_LOST
 } ball_balance_sequence_state_t;
 
+typedef enum {
+    BALL_CONTROL_DISABLED = 0,
+    BALL_CONTROL_CASCADE,
+    BALL_CONTROL_SPEED_TEST
+} ball_balance_control_mode_t;
+
 typedef struct {
     ball_balance_state_t state;
     ball_balance_sequence_state_t sequence_state;
+    ball_balance_control_mode_t control_mode;
     bool enabled;
     bool vision_ready;
     bool sequence_started_once;
@@ -32,6 +39,9 @@ typedef struct {
     float velocity_cm_per_s;
     float error_cm;
     float integral_cm_s;
+    float target_velocity_cm_per_s;
+    float speed_error_cm_per_s;
+    float control_output_us;
     int16_t raw_center_x_px;
     int16_t raw_center_y_px;
     float raw_score;
@@ -53,6 +63,7 @@ typedef struct {
 ml_status_t ball_balance_init(void);
 void ball_balance_process(void);
 ml_status_t ball_balance_enable(bool enable);
+ml_status_t ball_balance_enable_speed_test(bool enable);
 ml_status_t ball_balance_set_target_cm(float target_cm);
 ml_status_t ball_balance_set_manual_servo_offset_us(int16_t offset_us);
 ml_status_t ball_balance_start_pm5_sequence(void);

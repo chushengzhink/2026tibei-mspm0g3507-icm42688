@@ -14,6 +14,7 @@ typedef struct {
     maix_ball_parser_t parser;
     ball_balance_state_t state;
     ball_balance_sequence_state_t sequence_state;
+    ball_balance_control_mode_t control_mode;
     bool initialized;
     bool enabled;
     bool vision_ready;
@@ -27,6 +28,7 @@ typedef struct {
     uint32_t last_report_capture_ms;
     uint32_t vision_frame_interval_ms;
     uint32_t last_valid_receive_ms;
+    uint32_t last_control_ms;
     uint32_t sequence_start_ms;
     uint32_t sequence_elapsed_ms;
     uint32_t sequence_settle_start_ms;
@@ -40,6 +42,11 @@ typedef struct {
     float velocity_cm_per_s;
     float error_cm;
     float integral_cm_s;
+    float target_velocity_cm_per_s;
+    float speed_error_cm_per_s;
+    float control_output_us;
+    float previous_velocity_cm_per_s;
+    float filtered_acceleration_cm_per_s2;
 } ball_balance_context_t;
 
 static ball_balance_context_t g_ball;
@@ -83,10 +90,21 @@ static void ball_tick_1ms(void *context)
     ++g_ball_time_ms;
 }
 
+static void ball_reset_pid_state(void)
+{
+    g_ball.error_cm = g_ball.target_cm - g_ball.position_cm;
+    g_ball.integral_cm_s = 0.0f;
+    g_ball.target_velocity_cm_per_s = 0.0f;
+    g_ball.speed_error_cm_per_s = -g_ball.velocity_cm_per_s;
+    g_ball.control_output_us = 0.0f;
+    g_ball.previous_velocity_cm_per_s = g_ball.velocity_cm_per_s;
+    g_ball.filtered_acceleration_cm_per_s2 = 0.0f;
+    g_ball.last_control_ms = ball_now_ms();
+}
+
 static void ball_recenter(void)
 {
-    g_ball.integral_cm_s = 0.0f;
-    g_ball.error_cm = g_ball.target_cm - g_ball.position_cm;
+    ball_reset_pid_state();
     (void) rds3230_set_center(&g_ball.servo);
 }
 
@@ -94,8 +112,7 @@ static void ball_reset_controller(void)
 {
     int32_t pulse_us;
 
-    g_ball.integral_cm_s = 0.0f;
-    g_ball.error_cm = g_ball.target_cm - g_ball.position_cm;
+    ball_reset_pid_state();
     if (!g_ball.enabled && (g_ball.manual_servo_offset_us != 0)) {
         pulse_us = (int32_t) BALL_SERVO_CENTER_US +
             g_ball.manual_servo_offset_us;
@@ -112,34 +129,7 @@ static void ball_invalidate_vision(void)
     g_ball.capture_time_initialized = false;
     g_ball.consecutive_valid_frames = 0U;
     g_ball.velocity_cm_per_s = 0.0f;
-}
-
-static bool ball_pixels_to_cm(
-    int16_t center_x_px, int16_t center_y_px, float *position_cm)
-{
-    float axis_x = BALL_AXIS_POSITIVE_X_PX - BALL_AXIS_NEGATIVE_X_PX;
-    float axis_y = BALL_AXIS_POSITIVE_Y_PX - BALL_AXIS_NEGATIVE_Y_PX;
-    float axis_length_squared = (axis_x * axis_x) + (axis_y * axis_y);
-    float offset_x;
-    float offset_y;
-    float fraction;
-    float position;
-
-    if ((position_cm == 0) || (axis_length_squared < 1.0f)) {
-        return false;
-    }
-    offset_x = (float) center_x_px - BALL_AXIS_NEGATIVE_X_PX;
-    offset_y = (float) center_y_px - BALL_AXIS_NEGATIVE_Y_PX;
-    fraction = ((offset_x * axis_x) + (offset_y * axis_y)) /
-        axis_length_squared;
-    position = BALL_AXIS_NEGATIVE_CM + fraction *
-        (BALL_AXIS_POSITIVE_CM - BALL_AXIS_NEGATIVE_CM);
-    if ((position < BALL_MEASUREMENT_MINIMUM_CM) ||
-        (position > BALL_MEASUREMENT_MAXIMUM_CM)) {
-        return false;
-    }
-    *position_cm = position;
-    return true;
+    ball_reset_pid_state();
 }
 
 static void ball_set_servo_from_control(float control_us)
@@ -154,33 +144,92 @@ static void ball_set_servo_from_control(float control_us)
     (void) rds3230_set_target_us(&g_ball.servo, pulse_us);
 }
 
-static void ball_run_controller(float dt_s)
+static void ball_run_controller(void)
 {
     float candidate_integral;
+    float candidate_velocity;
+    float acceleration;
+    float target_velocity;
+    float speed_error;
     float candidate_control;
-    float control;
+    bool outer_saturated;
+    bool inner_saturated;
 
     g_ball.error_cm = g_ball.target_cm - g_ball.position_cm;
-    candidate_integral = ball_clamp(
-        g_ball.integral_cm_s + (g_ball.error_cm * dt_s),
-        -BALL_INTEGRAL_LIMIT_CM_S, BALL_INTEGRAL_LIMIT_CM_S);
-    candidate_control = (BALL_KP_US_PER_CM * g_ball.error_cm) -
-        (BALL_KV_US_PER_CM_PER_S * g_ball.velocity_cm_per_s) +
-        (BALL_KI_US_PER_CM_S * candidate_integral);
+    acceleration = (g_ball.velocity_cm_per_s -
+        g_ball.previous_velocity_cm_per_s) /
+        ((float) BALL_CONTROL_PERIOD_MS / 1000.0f);
+    g_ball.previous_velocity_cm_per_s = g_ball.velocity_cm_per_s;
+    g_ball.filtered_acceleration_cm_per_s2 +=
+        BALL_SPEED_D_FILTER_ALPHA *
+        (acceleration - g_ball.filtered_acceleration_cm_per_s2);
 
-    if (!(((candidate_control > BALL_CONTROL_LIMIT_US) &&
-           (g_ball.error_cm > 0.0f)) ||
-          ((candidate_control < -BALL_CONTROL_LIMIT_US) &&
-           (g_ball.error_cm < 0.0f)))) {
-        g_ball.integral_cm_s = candidate_integral;
+    if (g_ball.control_mode == BALL_CONTROL_SPEED_TEST) {
+        g_ball.integral_cm_s = 0.0f;
+        target_velocity = 0.0f;
+    } else {
+        if ((BALL_POSITION_KI_PER_S2 <= 0.0f) ||
+            (ball_abs(g_ball.error_cm) >
+             BALL_POSITION_INTEGRAL_SEPARATION_CM)) {
+            candidate_integral = 0.0f;
+            g_ball.integral_cm_s = 0.0f;
+        } else {
+            candidate_integral = ball_clamp(
+                g_ball.integral_cm_s +
+                (g_ball.error_cm *
+                 ((float) BALL_CONTROL_PERIOD_MS / 1000.0f)),
+                -BALL_POSITION_INTEGRAL_LIMIT_CM_S,
+                BALL_POSITION_INTEGRAL_LIMIT_CM_S);
+        }
+
+        candidate_velocity =
+            (BALL_POSITION_KP_PER_S * g_ball.error_cm) -
+            (BALL_POSITION_KD * g_ball.velocity_cm_per_s) +
+            (BALL_POSITION_KI_PER_S2 * candidate_integral);
+        target_velocity = ball_clamp(candidate_velocity,
+            -BALL_SPEED_REFERENCE_LIMIT_CM_PER_S,
+            BALL_SPEED_REFERENCE_LIMIT_CM_PER_S);
+        speed_error = target_velocity - g_ball.velocity_cm_per_s;
+        candidate_control =
+            (BALL_SPEED_KP_US_PER_CM_PER_S * speed_error) -
+            (BALL_SPEED_KD_US_PER_CM_PER_S2 *
+             g_ball.filtered_acceleration_cm_per_s2);
+        outer_saturated =
+            ((candidate_velocity > BALL_SPEED_REFERENCE_LIMIT_CM_PER_S) &&
+             (g_ball.error_cm > 0.0f)) ||
+            ((candidate_velocity < -BALL_SPEED_REFERENCE_LIMIT_CM_PER_S) &&
+             (g_ball.error_cm < 0.0f));
+        inner_saturated =
+            ((candidate_control > BALL_CONTROL_LIMIT_US) &&
+             (g_ball.error_cm > 0.0f)) ||
+            ((candidate_control < -BALL_CONTROL_LIMIT_US) &&
+             (g_ball.error_cm < 0.0f));
+        if ((ball_abs(g_ball.error_cm) <=
+             BALL_POSITION_INTEGRAL_SEPARATION_CM) &&
+            !outer_saturated && !inner_saturated) {
+            g_ball.integral_cm_s = candidate_integral;
+        }
+
+        candidate_velocity =
+            (BALL_POSITION_KP_PER_S * g_ball.error_cm) -
+            (BALL_POSITION_KD * g_ball.velocity_cm_per_s) +
+            (BALL_POSITION_KI_PER_S2 * g_ball.integral_cm_s);
+        target_velocity = ball_clamp(candidate_velocity,
+            -BALL_SPEED_REFERENCE_LIMIT_CM_PER_S,
+            BALL_SPEED_REFERENCE_LIMIT_CM_PER_S);
     }
 
-    control = (BALL_KP_US_PER_CM * g_ball.error_cm) -
-        (BALL_KV_US_PER_CM_PER_S * g_ball.velocity_cm_per_s) +
-        (BALL_KI_US_PER_CM_S * g_ball.integral_cm_s);
-    control = ball_clamp(
-        control, -BALL_CONTROL_LIMIT_US, BALL_CONTROL_LIMIT_US);
-    ball_set_servo_from_control(control);
+    g_ball.target_velocity_cm_per_s = target_velocity;
+    g_ball.speed_error_cm_per_s =
+        target_velocity - g_ball.velocity_cm_per_s;
+    candidate_control =
+        (BALL_SPEED_KP_US_PER_CM_PER_S *
+         g_ball.speed_error_cm_per_s) -
+        (BALL_SPEED_KD_US_PER_CM_PER_S2 *
+         g_ball.filtered_acceleration_cm_per_s2);
+    g_ball.control_output_us = ball_clamp(candidate_control,
+        -BALL_CONTROL_LIMIT_US, BALL_CONTROL_LIMIT_US);
+    ball_set_servo_from_control(g_ball.control_output_us);
 }
 
 static void ball_stop_sequence(ball_balance_sequence_state_t reason,
@@ -192,6 +241,7 @@ static void ball_stop_sequence(ball_balance_sequence_state_t reason,
     g_ball.sequence_state = reason;
     g_ball.sequence_settle_active = false;
     g_ball.enabled = false;
+    g_ball.control_mode = BALL_CONTROL_DISABLED;
     g_ball.manual_servo_offset_us = 0;
     g_ball.state = state;
     ball_recenter();
@@ -208,6 +258,7 @@ static void ball_mark_vision_lost(uint32_t now_ms)
             BALL_SEQUENCE_VISION_LOST, BALL_BALANCE_VISION_LOST, now_ms);
     } else if (was_enabled) {
         g_ball.enabled = false;
+        g_ball.control_mode = BALL_CONTROL_DISABLED;
         g_ball.manual_servo_offset_us = 0;
         g_ball.state = BALL_BALANCE_VISION_LOST;
         ball_recenter();
@@ -243,13 +294,11 @@ static void ball_handle_measurement(
         ball_mark_vision_lost(receive_ms);
         return;
     }
+    measured_position_cm = measurement->position_cm;
     if ((measurement->score < BALL_MINIMUM_SCORE) ||
-        (measurement->center_x_px < 0) ||
-        (measurement->center_x_px >= BALL_IMAGE_WIDTH_PX) ||
-        (measurement->center_y_px < 0) ||
-        (measurement->center_y_px >= BALL_IMAGE_HEIGHT_PX) ||
-        !ball_pixels_to_cm(measurement->center_x_px,
-            measurement->center_y_px, &measured_position_cm)) {
+        !ball_float_is_finite(measured_position_cm) ||
+        (measured_position_cm < BALL_MEASUREMENT_MINIMUM_CM) ||
+        (measured_position_cm > BALL_MEASUREMENT_MAXIMUM_CM)) {
         ball_mark_vision_lost(receive_ms);
         return;
     }
@@ -315,7 +364,6 @@ static void ball_handle_measurement(
 
     if (g_ball.enabled && g_ball.vision_ready) {
         g_ball.state = BALL_BALANCE_ACTIVE;
-        ball_run_controller(dt_s);
     }
 }
 
@@ -405,6 +453,7 @@ ml_status_t ball_balance_init(void)
     g_ball.target_cm = 0.0f;
     g_ball.state = BALL_BALANCE_DISABLED;
     g_ball.sequence_state = BALL_SEQUENCE_IDLE;
+    g_ball.control_mode = BALL_CONTROL_DISABLED;
     g_ball.initialized = true;
     return ML_STATUS_OK;
 }
@@ -431,6 +480,11 @@ void ball_balance_process(void)
          BALL_VISION_TIMEOUT_MS)) {
         ball_mark_vision_lost(now_ms);
     }
+    if (g_ball.enabled && g_ball.vision_ready &&
+        ((now_ms - g_ball.last_control_ms) >= BALL_CONTROL_PERIOD_MS)) {
+        g_ball.last_control_ms += BALL_CONTROL_PERIOD_MS;
+        ball_run_controller();
+    }
     ball_update_sequence(now_ms);
     (void) rds3230_update(&g_ball.servo, now_ms);
 }
@@ -443,9 +497,12 @@ ml_status_t ball_balance_enable(bool enable)
     if (!enable && ball_sequence_is_running()) {
         return ball_balance_abort_sequence();
     }
-    if (enable == g_ball.enabled) {
+    if ((enable == g_ball.enabled) &&
+        (!enable ||
+         (g_ball.control_mode == BALL_CONTROL_CASCADE))) {
         if (!enable) {
             g_ball.manual_servo_offset_us = 0;
+            g_ball.control_mode = BALL_CONTROL_DISABLED;
             g_ball.state = BALL_BALANCE_DISABLED;
             ball_recenter();
         }
@@ -453,6 +510,8 @@ ml_status_t ball_balance_enable(bool enable)
     }
 
     g_ball.enabled = enable;
+    g_ball.control_mode = enable ?
+        BALL_CONTROL_CASCADE : BALL_CONTROL_DISABLED;
     g_ball.manual_servo_offset_us = 0;
     ball_reset_controller();
     if (enable) {
@@ -462,6 +521,26 @@ ml_status_t ball_balance_enable(bool enable)
         g_ball.state = BALL_BALANCE_DISABLED;
         g_ball.sequence_settle_active = false;
     }
+    return ML_STATUS_OK;
+}
+
+ml_status_t ball_balance_enable_speed_test(bool enable)
+{
+    if (!g_ball.initialized) {
+        return ML_STATUS_NOT_INITIALIZED;
+    }
+    if (!enable) {
+        return ball_balance_enable(false);
+    }
+    if (!g_ball.vision_ready || ball_sequence_is_running()) {
+        return ML_STATUS_BUSY;
+    }
+
+    g_ball.enabled = true;
+    g_ball.control_mode = BALL_CONTROL_SPEED_TEST;
+    g_ball.manual_servo_offset_us = 0;
+    g_ball.state = BALL_BALANCE_ACTIVE;
+    ball_reset_controller();
     return ML_STATUS_OK;
 }
 
@@ -487,8 +566,9 @@ ml_status_t ball_balance_set_manual_servo_offset_us(int16_t offset_us)
     }
 
     g_ball.manual_servo_offset_us = offset_us;
+    g_ball.control_mode = BALL_CONTROL_DISABLED;
     g_ball.sequence_settle_active = false;
-    g_ball.integral_cm_s = 0.0f;
+    ball_reset_pid_state();
     g_ball.state = (offset_us == 0) ?
         BALL_BALANCE_DISABLED : BALL_BALANCE_MANUAL_SERVO;
     return rds3230_set_target_us(&g_ball.servo, (uint16_t) pulse_us);
@@ -528,6 +608,7 @@ ml_status_t ball_balance_start_pm5_sequence(void)
     }
 
     g_ball.enabled = true;
+    g_ball.control_mode = BALL_CONTROL_CASCADE;
     g_ball.manual_servo_offset_us = 0;
     g_ball.state = BALL_BALANCE_ACTIVE;
     g_ball.sequence_state = BALL_SEQUENCE_TO_PLUS_5_CM;
@@ -567,6 +648,7 @@ ml_status_t ball_balance_get_status(ball_balance_status_t *status)
     now_ms = ball_now_ms();
     status->state = g_ball.state;
     status->sequence_state = g_ball.sequence_state;
+    status->control_mode = g_ball.control_mode;
     status->enabled = g_ball.enabled;
     status->vision_ready = g_ball.vision_ready;
     status->sequence_started_once = g_ball.sequence_started_once;
@@ -575,6 +657,10 @@ ml_status_t ball_balance_get_status(ball_balance_status_t *status)
     status->velocity_cm_per_s = g_ball.velocity_cm_per_s;
     status->error_cm = g_ball.error_cm;
     status->integral_cm_s = g_ball.integral_cm_s;
+    status->target_velocity_cm_per_s =
+        g_ball.target_velocity_cm_per_s;
+    status->speed_error_cm_per_s = g_ball.speed_error_cm_per_s;
+    status->control_output_us = g_ball.control_output_us;
     status->raw_center_x_px = g_ball.raw_center_x_px;
     status->raw_center_y_px = g_ball.raw_center_y_px;
     status->raw_score = g_ball.raw_score;

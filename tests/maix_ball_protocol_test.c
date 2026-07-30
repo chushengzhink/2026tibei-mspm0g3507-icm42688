@@ -21,7 +21,7 @@ static void write_le32(uint8_t *data, uint32_t value)
 }
 
 static void make_frame(uint8_t *frame, uint32_t capture_ms,
-    int16_t x, int16_t y, float score, uint8_t valid)
+    int16_t x, int16_t y, float position_cm, float score, uint8_t valid)
 {
     uint16_t crc;
 
@@ -36,10 +36,11 @@ static void make_frame(uint8_t *frame, uint32_t capture_ms,
     write_le32(&frame[10], capture_ms);
     write_le16(&frame[14], (uint16_t) x);
     write_le16(&frame[16], (uint16_t) y);
-    memcpy(&frame[18], &score, sizeof(score));
-    frame[22] = valid;
-    crc = maix_crc16_ibm(frame, 26U);
-    write_le16(&frame[26], crc);
+    memcpy(&frame[18], &position_cm, sizeof(position_cm));
+    memcpy(&frame[22], &score, sizeof(score));
+    frame[26] = valid;
+    crc = maix_crc16_ibm(frame, 30U);
+    write_le16(&frame[30], crc);
 }
 
 static bool feed(maix_ball_parser_t *parser, const uint8_t *bytes,
@@ -65,50 +66,56 @@ int main(void)
 
     assert(maix_crc16_ibm(0, 10U) == 0U);
     maix_ball_parser_init(&parser);
-    make_frame(frame, 0x12345678UL, 160, 112, 0.75f, 1U);
+    make_frame(frame, 0x12345678UL, 160, 112, 1.25f, 0.75f, 1U);
     assert(!feed(&parser, frame, 9U, &measurement));
     assert(feed(&parser, &frame[9], MAIX_BALL_FRAME_SIZE - 9U,
         &measurement));
     assert(measurement.capture_ms == 0x12345678UL);
     assert(measurement.center_x_px == 160);
     assert(measurement.center_y_px == 112);
+    assert(fabsf(measurement.position_cm - 1.25f) < 0.0001f);
     assert(fabsf(measurement.score - 0.75f) < 0.0001f);
     assert(measurement.valid);
 
-    make_frame(frame, 20U, 0, 0, 0.0f, 0U);
+    make_frame(frame, 20U, 0, 0, 0.0f, 0.0f, 0U);
     assert(feed(&parser, frame, sizeof(frame), &measurement));
     assert(!measurement.valid);
+    assert(measurement.position_cm == 0.0f);
     assert(measurement.score == 0.0f);
 
-    make_frame(frame, 30U, 100, 100, 0.5f, 1U);
-    frame[26] ^= 0x01U;
+    make_frame(frame, 30U, 100, 100, 2.0f, 0.5f, 1U);
+    frame[30] ^= 0x01U;
     assert(!feed(&parser, frame, sizeof(frame), &measurement));
     assert(parser.crc_errors == 1U);
 
-    make_frame(frame, 40U, 100, 100, 0.5f, 1U);
-    frame[4] = 19U;
+    make_frame(frame, 40U, 100, 100, 2.0f, 0.5f, 1U);
+    frame[4] = 20U;
     assert(!feed(&parser, frame, sizeof(frame), &measurement));
     assert(parser.length_errors >= 1U);
 
-    make_frame(frame, 50U, 100, 100, 0.5f, 1U);
+    make_frame(frame, 50U, 100, 100, 2.0f, 0.5f, 1U);
     frame[8] = 0xA2U;
-    write_le16(&frame[26], maix_crc16_ibm(frame, 26U));
+    write_le16(&frame[30], maix_crc16_ibm(frame, 30U));
     assert(!feed(&parser, frame, sizeof(frame), &measurement));
     assert(parser.format_errors == 1U);
 
-    make_frame(frame, 51U, 100, 100, 0.5f, 1U);
+    make_frame(frame, 51U, 100, 100, 2.0f, 0.5f, 1U);
     frame[8] = 0x81U;
-    write_le16(&frame[26], maix_crc16_ibm(frame, 26U));
+    write_le16(&frame[30], maix_crc16_ibm(frame, 30U));
     assert(!feed(&parser, frame, sizeof(frame), &measurement));
-    make_frame(frame, 52U, 100, 100, 0.5f, 1U);
+    make_frame(frame, 52U, 100, 100, 2.0f, 0.5f, 1U);
     frame[9] = 0x03U;
-    write_le16(&frame[26], maix_crc16_ibm(frame, 26U));
+    write_le16(&frame[30], maix_crc16_ibm(frame, 30U));
     assert(!feed(&parser, frame, sizeof(frame), &measurement));
-    make_frame(frame, 53U, 100, 100, 0.5f, 2U);
+    make_frame(frame, 53U, 100, 100, 2.0f, 0.5f, 2U);
     assert(!feed(&parser, frame, sizeof(frame), &measurement));
     assert(parser.format_errors == 4U);
 
-    make_frame(frame, 60U, 120, 110, 0.8f, 1U);
+    make_frame(frame, 54U, 100, 100, NAN, 0.5f, 1U);
+    assert(!feed(&parser, frame, sizeof(frame), &measurement));
+    assert(parser.format_errors == 5U);
+
+    make_frame(frame, 60U, 120, 110, -3.5f, 0.8f, 1U);
     memset(stream, 0x55, 5U);
     memcpy(&stream[5], frame, sizeof(frame));
     assert(feed(&parser, stream, sizeof(stream), &measurement));

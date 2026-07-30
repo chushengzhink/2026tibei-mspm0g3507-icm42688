@@ -4,7 +4,7 @@
 #include "ml_board.h"
 
 #ifndef BALL_BALANCE_ALLOW_SEQUENCE
-#define BALL_BALANCE_ALLOW_SEQUENCE       (0)
+#define BALL_BALANCE_ALLOW_SEQUENCE       (1)
 #endif
 
 /* Dedicated H3 resources. Values below remain unverified until bench tests. */
@@ -21,20 +21,12 @@
 #define BALL_SERVO_CENTER_US              (1500U)
 #define BALL_SERVO_MAXIMUM_US             (1700U)
 #define BALL_SERVO_MAX_SLEW_US_PER_S      (2000UL)
-#define BALL_MANUAL_MAX_OFFSET_US         (50)
+#define BALL_MANUAL_MAX_OFFSET_US         (100)
+#define BALL_CALIBRATION_SPEED_TEST       (1)
 
 /* Verified 2026-07-30: 1450 us lowers the +cm side. */
 #define BALL_CONTROL_DIRECTION            (-1.0f)
 
-/* Unverified starting calibration for a 320 x 224 model input. */
-#define BALL_IMAGE_WIDTH_PX               (320)
-#define BALL_IMAGE_HEIGHT_PX              (224)
-#define BALL_AXIS_NEGATIVE_X_PX           (20.0f)
-#define BALL_AXIS_NEGATIVE_Y_PX           (112.0f)
-#define BALL_AXIS_NEGATIVE_CM             (-12.0f)
-#define BALL_AXIS_POSITIVE_X_PX           (300.0f)
-#define BALL_AXIS_POSITIVE_Y_PX           (112.0f)
-#define BALL_AXIS_POSITIVE_CM             (12.0f)
 #define BALL_MEASUREMENT_MINIMUM_CM       (-12.5f)
 #define BALL_MEASUREMENT_MAXIMUM_CM       (12.5f)
 
@@ -46,11 +38,17 @@
 #define BALL_OBSERVER_ALPHA               (0.65f)
 #define BALL_OBSERVER_BETA                (0.12f)
 
-/* Unverified controller starting values. Tune one class at a time. */
-#define BALL_KP_US_PER_CM                 (40.0f)
-#define BALL_KV_US_PER_CM_PER_S           (25.0f)
-#define BALL_KI_US_PER_CM_S               (5.0f)
-#define BALL_INTEGRAL_LIMIT_CM_S          (8.0f)
+/* Unverified cascaded controller starting values. Tune one class at a time. */
+#define BALL_CONTROL_PERIOD_MS            (10U)
+#define BALL_POSITION_KP_PER_S            (1.6f)
+#define BALL_POSITION_KD                  (0.0f)
+#define BALL_POSITION_KI_PER_S2           (0.0f)
+#define BALL_POSITION_INTEGRAL_LIMIT_CM_S (8.0f)
+#define BALL_POSITION_INTEGRAL_SEPARATION_CM (1.0f)
+#define BALL_SPEED_REFERENCE_LIMIT_CM_PER_S  (10.0f)
+#define BALL_SPEED_KP_US_PER_CM_PER_S     (25.0f)
+#define BALL_SPEED_KD_US_PER_CM_PER_S2    (0.0f)
+#define BALL_SPEED_D_FILTER_ALPHA         (0.20f)
 #define BALL_CONTROL_LIMIT_US             (200.0f)
 #define BALL_TARGET_MINIMUM_CM            (-11.5f)
 #define BALL_TARGET_MAXIMUM_CM            (11.5f)

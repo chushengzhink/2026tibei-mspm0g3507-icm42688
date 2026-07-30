@@ -31,6 +31,12 @@ static bool float_is_valid_score(float value)
         (value <= 1.0f) && (value <= FLT_MAX);
 }
 
+static bool float_is_finite(float value)
+{
+    return (value == value) && (value >= -FLT_MAX) &&
+        (value <= FLT_MAX);
+}
+
 uint16_t maix_crc16_ibm(const uint8_t *data, uint32_t length)
 {
     uint16_t crc = 0U;
@@ -73,9 +79,10 @@ static bool parser_decode(maix_ball_parser_t *parser,
     maix_ball_measurement_t *measurement)
 {
     uint8_t flags = parser->frame[8];
-    uint8_t valid = parser->frame[22];
-    uint16_t expected_crc = maix_crc16_ibm(parser->frame, 26U);
-    uint16_t received_crc = read_le16(&parser->frame[26]);
+    uint8_t valid = parser->frame[26];
+    uint16_t expected_crc = maix_crc16_ibm(parser->frame, 30U);
+    uint16_t received_crc = read_le16(&parser->frame[30]);
+    float position_cm;
     float score;
 
     if (expected_crc != received_crc) {
@@ -91,8 +98,10 @@ static bool parser_decode(maix_ball_parser_t *parser,
         return false;
     }
 
-    memcpy(&score, &parser->frame[18], sizeof(score));
-    if ((valid != 0U) && !float_is_valid_score(score)) {
+    memcpy(&position_cm, &parser->frame[18], sizeof(position_cm));
+    memcpy(&score, &parser->frame[22], sizeof(score));
+    if ((valid != 0U) &&
+        (!float_is_finite(position_cm) || !float_is_valid_score(score))) {
         ++parser->format_errors;
         return false;
     }
@@ -100,6 +109,7 @@ static bool parser_decode(maix_ball_parser_t *parser,
     measurement->capture_ms = read_le32(&parser->frame[10]);
     measurement->center_x_px = (int16_t) read_le16(&parser->frame[14]);
     measurement->center_y_px = (int16_t) read_le16(&parser->frame[16]);
+    measurement->position_cm = (valid == 0U) ? 0.0f : position_cm;
     measurement->score = (valid == 0U) ? 0.0f : score;
     measurement->valid = (valid != 0U);
     ++parser->frames_ok;

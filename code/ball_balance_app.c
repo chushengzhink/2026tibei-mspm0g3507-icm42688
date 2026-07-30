@@ -188,6 +188,9 @@ static const char *ball_app_state_text(
 {
     if (g_app.calibration_mode) {
         if (status->enabled) {
+            if (status->control_mode == BALL_CONTROL_SPEED_TEST) {
+                return "CAL SPEED PD";
+            }
             return "CAL CENTER LOOP";
         }
         if (!status->vision_ready) {
