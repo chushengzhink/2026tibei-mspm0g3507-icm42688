@@ -1,6 +1,9 @@
 # Findings & Decisions
 
 ## Requirements
+- Phase 19杆球固件必须是独立工程；不得编译或初始化底盘、电机、编码器、LF04和IMU，PB24仍是唯一会触发杆球动作的按键。
+- 杆球新增资源锁定为PB27/PINCM58/TIMA1_CCP1、UART2 PB15/PB16和TIMG6 1 ms；现有底盘工程与40%绝对PWM限制不得改变。
+- 正式序列默认门控关闭，未实测的舵机方向、中位、像素端点和PID只可标成起点，不可写成已验证值。
 - Confirmed physical LF04 order is PA31, PA12, PB8, PA27 from left to right, encoded as B1/B2/B4/B8.
 - Right-outer LF04 is physically PA27 and must be GPIO input with pull-up.
 - Race line assist uses four digital sensors and remains bounded by 500 mm/s wheel targets.
@@ -9,6 +12,13 @@
 - Braking samples must remain in RAM until the three-cycle stopped criterion completes.
 
 ## Research Findings
+- 压缩包模块依赖仅为现有 `ml_pwm/ml_tim/ml_uart/ml_gpio/ml_board` 与标准库；不需要导入其SDK或生成配置。
+- 压缩包控制器已有28字节帧解析、alpha-beta观测、1300–1700 us限幅和斜率限制，但正式序列缺少启动视觉门、丢球锁存中止、超时停控回中、一次上电启动限制和用时状态。
+- 现有 `ml_pwm.c` 仅按TimerG初始化TIMG0/6/7/8/12；PB27已在GPIO枚举中定义为PINCM58，但PWM板级宏、资源所有者和TimerA初始化路径均不存在。
+- 现有 `user/isr.c` 已提供TIMG6和UART2分发；TIMA1 PWM不需要中断处理。
+- 现有 `chassis_key`只产生60 ms去抖后的按下事件，没有长按/释放事件；杆球应用需要在自身维护PB24长按状态，但可复用其短按防抖思想。
+- 当前README/WIRING/ROBOT_SETUP仍只描述默认底盘和竞速工程；Phase 19文档应追加独立章节，避免改写已有赛道实测记录。
+- 现有按键实测映射为PA14/PA15/PA24/PB24/PB25，低有效；杆球标定模式必须让方向键完全无舵机动作。
 - MSPM0G3507 PA27 is `IOMUX_PINCM60`; GPIO function is `IOMUX_PINCM60_PF_GPIOA_DIO27`.
 - PA27 has alternate RTC/SPI/TIMG8/CAN functions, but `gpio_init(..., PA27, IN_UP)` explicitly selects GPIO input.
 - Current race configuration already reaches the 20000/50000 hard cap through 14000 PID + 6000 feedforward.

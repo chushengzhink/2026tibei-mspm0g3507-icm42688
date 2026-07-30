@@ -330,6 +330,7 @@ static void test_formal_three_source_fusion_replay(void)
     request.route_feedforward_rad_s = 0.72f;
     request.heading_feedback_rad_s = 0.35f;
     request.heading_error_deg = 5.31f;
+    request.heading_only = false;
     (void) chassis_track_line_control_init(&control,
         &g_chassis_track_line_control_default_config);
     (void) chassis_track_line_control_update_fused(&control,
@@ -382,6 +383,49 @@ static void test_formal_three_source_fusion_replay(void)
         near_value(output.final_steering_bias_mm_s,
               output.correction_mm_s, 0.001f),
         "live B2 remains authoritative over opposing heading feedback");
+}
+
+static void test_heading_only_ignores_lf04(void)
+{
+    static const uint8_t patterns[3] = {0x01U, 0x08U, 0x00U};
+    chassis_track_line_control_t control = {0};
+    chassis_track_line_control_output_t output;
+    chassis_track_line_fusion_request_t request = {0};
+    line_sample_t sample;
+    float half_track = 0.5f *
+        g_chassis_track_line_control_default_config.effective_track_mm;
+    uint8_t index;
+
+    request.linear_mm_s = 0.0f;
+    request.route_feedforward_rad_s = 0.72f;
+    request.heading_feedback_rad_s = -0.35f;
+    request.heading_error_deg = -29.77f;
+    request.heading_only = true;
+    (void) chassis_track_line_control_init(&control,
+        &g_chassis_track_line_control_default_config);
+
+    for (index = 0U; index < 3U; ++index) {
+        sample = sample_for(patterns[index]);
+        (void) chassis_track_line_control_update_fused(&control,
+            &sample, &request, &output);
+        check(near_value(output.line_weight, 0.0f, 0.001f) &&
+            near_value(output.route_feedforward_bias_mm_s, 0.0f,
+                0.001f) &&
+            near_value(output.final_steering_bias_mm_s,
+                -0.35f * half_track, 0.001f) &&
+            near_value(output.left_mm_s, 0.35f * half_track, 0.001f) &&
+            near_value(output.right_mm_s, -0.35f * half_track, 0.001f),
+            "heading-only alignment ignores B1, B8, and B0 direction");
+    }
+
+    request.heading_feedback_rad_s = 0.35f;
+    sample = sample_for(0x08U);
+    (void) chassis_track_line_control_update_fused(&control,
+        &sample, &request, &output);
+    check(near_value(output.final_steering_bias_mm_s,
+              0.35f * half_track, 0.001f) &&
+        near_value(output.line_weight, 0.0f, 0.001f),
+        "heading-only alignment preserves positive correction direction");
 }
 
 static void test_outer_boost_memory_transitions(void)
@@ -1031,6 +1075,7 @@ int main(void)
     test_infrared_priority_over_route();
     test_second_curve_b2_b0_fusion_replay();
     test_formal_three_source_fusion_replay();
+    test_heading_only_ignores_lf04();
     test_outer_boost_memory_transitions();
     test_pd_damping_and_direct_reversal_confirmation();
     test_b0_holds_each_last_error();

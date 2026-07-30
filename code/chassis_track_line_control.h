@@ -59,6 +59,7 @@ typedef struct {
     float route_feedforward_rad_s;
     float heading_feedback_rad_s;
     float heading_error_deg;
+    bool heading_only;
 } chassis_track_line_fusion_request_t;
 
 typedef struct {

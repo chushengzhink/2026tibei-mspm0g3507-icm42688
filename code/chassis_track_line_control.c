@@ -592,16 +592,23 @@ static ml_status_t line_control_update_internal(
     }
     half_track = control->config.effective_track_mm * 0.5f;
     if (formal_fusion) {
-        output->route_feedforward_bias_mm_s =
-            fusion_request->route_feedforward_rad_s * half_track;
+        output->route_feedforward_bias_mm_s = fusion_request->heading_only ?
+            0.0f : fusion_request->route_feedforward_rad_s * half_track;
         output->heading_feedback_bias_mm_s =
             fusion_request->heading_feedback_rad_s * half_track;
-        output->line_weight = 1.0f;
-        steering_bias_mm_s = line_control_steering_bias(
-            output->correction_mm_s,
-            output->route_feedforward_bias_mm_s +
+        if (fusion_request->heading_only) {
+            output->line_weight = 0.0f;
+            steering_bias_mm_s = line_control_limit_signed(
                 output->heading_feedback_bias_mm_s,
-            maximum_correction_mm_s);
+                control->config.maximum_correction_mm_s);
+        } else {
+            output->line_weight = 1.0f;
+            steering_bias_mm_s = line_control_steering_bias(
+                output->correction_mm_s,
+                output->route_feedforward_bias_mm_s +
+                    output->heading_feedback_bias_mm_s,
+                maximum_correction_mm_s);
+        }
     } else {
         output->route_feedforward_bias_mm_s =
             angular_rad_s * half_track;

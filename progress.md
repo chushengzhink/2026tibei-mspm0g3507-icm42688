@@ -315,3 +315,22 @@
   - Added the exact failed first-curve regression plus B0 hold, centered route takeover, same-direction cap, and opposing-heading LF04-authority coverage.
   - Re-ran the complete host suite: `18/18 passed`; compiled line control, mission, telemetry, and track application with ARM Compiler 5: `4/4 passed`.
   - Synchronized README, ROBOT_SETUP, HARDWARE_ACCEPTANCE, and TRACK_FUSION_HANDOFF with the corrected LF04-priority behavior and staged first-semicircle acceptance.
+### Phase 19: H题第3小题杆球模块融合
+- **Status:** complete
+- Actions taken:
+  - 接管已批准的融合计划；确认只移植源码，不导入压缩包工程、SDK、`empty.syscfg` 或 `ti_msp_dl_config`。
+  - 运行会话恢复并复核工作树，保留现有 Phase 18 底盘/赛道未提交修改。
+  - 锁定独立杆球工程、PB27/TIMA1_CCP1、UART2 PB15/PB16、TIMG6 1 ms、PB24 启停及默认禁止正式序列的实现边界。
+  - 完整核对根目录AGENTS、README、WIRING和ROBOT_SETUP；确认杆球文档必须追加独立章节并保留全部底盘/竞速安全记录。
+  - 读取压缩包中的控制器、舵机、协议、标定示例与Maix脚本，列出正式序列安全状态机和TimerA适配缺口。
+  - 新增PB27/PINCM58/TIMA1_CCP1板级PWM路由、独立资源所有者和TimerA 50 Hz初始化分支；原TimerG路径未改语义。
+  - 移植并加固协议、RDS3230和杆球控制器：正式序列需视觉就绪、一次上电仅一次，丢球/150 ms超时/5 s超限/人工中止均清积分并斜率回中，完成后保持-5 cm闭环。
+  - 新增正式/标定应用：PB24启动和中止、开机按住PB24进入需先松键的标定、中心键短按执行1500/1450/1500/1550/1500 us、长按切换0 cm闭环；方向键无舵机动作。
+  - 生成独立 `project_ball.uvprojx`，仅含杆球、UART2、TIMG6、TIMA1 PWM、GPIO、OLED和系统依赖；源文件清单无chassis/motor/encoder/LF04/IMU/Fusion。
+  - 新增三组主机测试并保留原18组，完整套件为`21/21 passed`；新增/受影响源文件ARMCC 5单文件编译全部通过。
+  - 新增`BALL_BALANCE_GUIDE.md`并同步README/WIRING/ROBOT_SETUP/HARDWARE_ACCEPTANCE，明确独立供电、PB27接线、默认序列锁、逐类调参和五次外部验收记录表；未把任何默认方向/端点/PID写成已验证值，也未改AGENTS中的现有stage 3记录。
+  - Maix协议脚本测试通过，`maixcam/main.py`与协议脚本`py_compile`通过，杆球工程XML源文件审计通过，`git diff --check`通过。
+  - 当前仍有交互式μVision打开`project_track.uvprojx`，按根目录约束未启动并行UV4；三个全量Rebuild继续作为Phase 19C唯一待项。
+  - 最终收口复跑保持`21/21 passed`，协议脚本与Maix语法通过，控制器/应用ARMCC 5复编通过，杆球工程禁用源审计及`git diff --check`通过。
+  - 用户在μVision完成`project_ball.uvprojx`全量Rebuild：`Code=12652, RO-data=1948, RW-data=880, ZI-data=1304`，`0 Error(s), 0 Warning(s)`；实际build log与map已核对，未出现底盘、电机、编码器、LF04或IMU/Fusion链接符号。
+  - 用户关闭交互式μVision后，按杆球→默认→竞速顺序执行命令行构建；杆球目标保持`0/0`，默认工程完整编译为`Code=35244, RO=3068, RW=1072, ZI=29040`且`0/0`，竞速工程编译链接为`Code=41808, RO=3400, RW=1072, ZI=29464`且`0/0`。

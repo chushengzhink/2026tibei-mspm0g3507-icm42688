@@ -4,7 +4,7 @@
 在保留40%硬限幅、默认自检和现有安全保护的前提下，实现PA27四路LF04辅助纠偏、竞速速度/用时/PWM遥测及UART0 CSV导出，并完成主机与ARM构建验证。
 
 ## Current Phase
-Phase 18
+Phase 19
 
 ## Phases
 
@@ -152,6 +152,13 @@ Phase 18
 - [ ] Complete both interactive Keil Rebuilds and staged hardware verification
 - **Status:** in_progress
 
+### Phase 19: H题第3小题杆球模块融合
+- [x] 19A: 从压缩包仅提取并适配杆球控制、RDS3230、Maix协议与脚本，增加PB27/TIMA1_CCP1 PWM路由
+- [x] 19B: 新增杆球正式/标定应用入口与独立 `project_ball.uvprojx`，确保不编译或初始化底盘电机
+- [x] 19C: 增加协议、舵机和控制状态机主机测试，完成脚本、ARMCC、XML、空白及三工程构建验证
+- [x] 19D: 完成接线与分阶段实机标定文档交接，不把未验证参数记录为实测值
+- **Status:** complete
+
 ## Decisions Made
 | Decision | Rationale |
 |----------|-----------|
@@ -211,5 +218,11 @@ Phase 18
 | Phase 17 combined task/progress bookkeeping patch matched the repeated phase heading ambiguously | 1 | Split the update into exact file-specific patches; source and tests were already successful |
 | Phase 18 combined planning-file patch missed a Unicode progress line | 1 | Split the bookkeeping into independent stable-anchor patches; no source file was touched |
 | Phase 18 first integrated host run reported 14/18 | 1 | Core sources compiled; update the intentionally changed telemetry and finish-gate contracts, then add formal-fusion replay coverage |
+| Initial Phase 19 inventory command returned exit code 1 when no `UV4` process matched | 1 | Treat the empty process result separately from file inventory; no build was launched |
+| First focused ball controller test expected integral growth while the +5 cm command was saturated | 1 | Move the simulated ball to +2 cm before checking nonzero integral, then keep the clear-on-abort assertion |
+| First focused-test shell command was rejected because it combined cleanup with a computed temporary path | 1 | Use explicit executables under the system temporary directory and leave cleanup outside the test command |
+| Ball-stub inventory requested a nonexistent shared `ml_pwm.h` | 1 | Add isolated `tests/ball_stubs` headers so existing chassis test stubs remain unchanged |
+| Cleanup of generated ARMCC/Python directories was rejected by the command safety policy | 1-2 | Add narrow ignore rules for `tmp/ball_armcc/` and `__pycache__/`; no user files are removed |
+| Windows `rg` rejected a literal `code/ball_*.c` path during the forbidden-call audit | 1 | Search the `code` directory with `-g 'ball_*.c'`; the corrected audit found no forbidden calls |
 | First 52-byte-by-600 telemetry allocation overflowed SRAM by `0xC10` | 1 | Keep the 52-byte public record and 27-column CSV but store 600 internal 44-byte compact records; tick/heading remain exact and x/y use 0.25 mm resolution |
 | Feedforward-first formal arbitration caused severe first-semicircle departure | 1 | Restore `22d672e` LF04-priority steering, retain split telemetry/finish changes, and add the exact B8 `-120` versus `+77/+37` regression |

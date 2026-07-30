@@ -15,8 +15,10 @@ typedef enum {
     CHASSIS_TRACK_FINAL_APPROACH,
     CHASSIS_TRACK_FINISH_CHECK,
     CHASSIS_TRACK_BRAKING,
+    CHASSIS_TRACK_ALIGNING,
     CHASSIS_TRACK_COMPLETE,
     CHASSIS_TRACK_FAULT_LAP_CHECK,
+    CHASSIS_TRACK_FAULT_ALIGNMENT,
     CHASSIS_TRACK_FAULT_EMERGENCY
 } chassis_track_state_t;
 
@@ -28,17 +30,23 @@ typedef struct {
     float approach_speed_mm_s;
     float acceleration_mm_s2;
     float approach_distance_mm;
+    float finish_reference_progress_mm;
     float finish_max_overrun_mm;
     float finish_stop_lead_mm;
     float finish_heading_target_deg;
     float finish_heading_tolerance_deg;
+    float finish_alignment_tolerance_deg;
+    float finish_alignment_heading_bias_deg;
+    float finish_alignment_max_start_error_deg;
     float heading_control_kp;
     float maximum_heading_correction_rad_s;
     float stop_speed_mm_s;
     float pass_time_s;
     float pass_error_mm;
     uint16_t control_period_ms;
+    uint16_t finish_alignment_timeout_ms;
     uint8_t finish_heading_confirm_cycles;
+    uint8_t finish_alignment_confirm_cycles;
     uint8_t stopped_cycles_required;
 } chassis_track_config_t;
 
@@ -58,7 +66,9 @@ typedef struct {
     float heading_error_deg;
     uint32_t start_time_ms;
     uint32_t stop_time_ms;
+    uint32_t alignment_start_time_ms;
     uint8_t heading_window_cycles;
+    uint8_t alignment_confirm_cycles;
     uint8_t stopped_cycles;
     bool distance_gate_met;
     bool heading_gate_met;

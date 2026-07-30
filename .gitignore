@@ -9,6 +9,8 @@ JLinkSettings.ini
 *.uvoptx
 
 # Temporary and operating-system files
+__pycache__/
+tmp/ball_armcc/
 *.tmp
 *.temp
 *.bak

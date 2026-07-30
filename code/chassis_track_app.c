@@ -267,6 +267,8 @@ static void track_show(const chassis_status_t *status)
             track_show_line(1U, "MOTOR FAULT");
         } else if ((g_track_app.output.state ==
              CHASSIS_TRACK_FAULT_LAP_CHECK) ||
+            (g_track_app.output.state ==
+             CHASSIS_TRACK_FAULT_ALIGNMENT) ||
             (g_track_app.output.state == CHASSIS_TRACK_FAULT_EMERGENCY)) {
             track_show_line(1U, chassis_track_state_text(
                 g_track_app.output.state));
@@ -282,6 +284,11 @@ static void track_show(const chassis_status_t *status)
                 (long) g_track_app.output.heading_progress_deg);
             track_show_line(2U, line);
             (void) snprintf(line, sizeof(line), "ENC/IMU MISMATCH");
+        } else if (g_track_app.output.state ==
+                   CHASSIS_TRACK_FAULT_ALIGNMENT) {
+            track_show_line(2U, "MOTORS LOCKED");
+            (void) snprintf(line, sizeof(line), "ALIGN H%+04ld",
+                (long) g_track_app.output.heading_progress_deg);
         } else {
             track_show_line(2U, "MOTORS LOCKED");
             (void) snprintf(line, sizeof(line), "STATUS %02u",
@@ -586,6 +593,15 @@ void chassis_track_app_poll(void)
             }
         }
         if ((g_track_app.state == TRACK_APP_RUNNING) &&
+            (command_status == ML_STATUS_OK) &&
+            !g_track_app.line_only_mode &&
+            (g_track_app.output.state == CHASSIS_TRACK_ALIGNING) &&
+            g_track_app.braking_capture_started) {
+            chassis_idle_capture_stop();
+            g_track_app.braking_capture_started = false;
+            g_track_app.velocity_started = false;
+        }
+        if ((g_track_app.state == TRACK_APP_RUNNING) &&
             (command_status != ML_STATUS_OK)) {
             track_fail(command_status);
         } else if ((g_track_app.state == TRACK_APP_RUNNING) &&
@@ -623,9 +639,11 @@ void chassis_track_app_poll(void)
                 g_track_app.state = TRACK_APP_FINISHED;
             } else if (!g_track_app.line_only_mode &&
                        ((g_track_app.output.state ==
-                        CHASSIS_TRACK_FAULT_LAP_CHECK) ||
-                       (g_track_app.output.state ==
-                        CHASSIS_TRACK_FAULT_EMERGENCY))) {
+                         CHASSIS_TRACK_FAULT_LAP_CHECK) ||
+                        (g_track_app.output.state ==
+                         CHASSIS_TRACK_FAULT_ALIGNMENT) ||
+                        (g_track_app.output.state ==
+                         CHASSIS_TRACK_FAULT_EMERGENCY))) {
                 g_track_app.fault_status = ML_STATUS_BUFFER_EMPTY;
                 g_track_app.state = TRACK_APP_FAULT;
             }
@@ -644,6 +662,8 @@ void chassis_track_app_poll(void)
                     g_track_app.output.heading_feedback_rad_s;
                 fusion_request.heading_error_deg =
                     g_track_app.output.heading_error_deg;
+                fusion_request.heading_only =
+                    g_track_app.output.state == CHASSIS_TRACK_ALIGNING;
                 command_status =
                     chassis_track_line_control_update_fused(
                         &g_track_app.line_control, &line,
@@ -689,7 +709,13 @@ void chassis_track_app_poll(void)
                         g_track_app.line_control_output.linear_mm_s;
                     g_track_app.output.angular_rad_s =
                         g_track_app.line_control_output.angular_rad_s;
-                    if (!g_track_app.velocity_started) {
+                    if ((g_track_app.output.state ==
+                         CHASSIS_TRACK_ALIGNING) &&
+                        (g_track_app.output.linear_mm_s == 0.0f) &&
+                        (g_track_app.output.angular_rad_s == 0.0f)) {
+                        chassis_stop();
+                        g_track_app.velocity_started = false;
+                    } else if (!g_track_app.velocity_started) {
                         command_status = chassis_set_velocity(
                             g_track_app.output.linear_mm_s,
                             g_track_app.output.angular_rad_s);

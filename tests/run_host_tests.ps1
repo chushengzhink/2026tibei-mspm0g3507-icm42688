@@ -149,6 +149,34 @@ $cases = @(
             'code/imu_attitude.c',
             'ml_libs/FusionAhrs.c'
         )
+    },
+    [pscustomobject]@{
+        Name = 'maix_ball_protocol_test'
+        Sources = @(
+            'tests/maix_ball_protocol_test.c',
+            'code/maix_ball_protocol.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'rds3230_test'
+        Arguments = @('-iquote', 'tests/ball_stubs')
+        Sources = @(
+            'tests/rds3230_test.c',
+            'code/rds3230.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'ball_balance_test'
+        Arguments = @(
+            '-iquote', 'tests/ball_stubs',
+            '-DBALL_BALANCE_ALLOW_SEQUENCE=1'
+        )
+        Sources = @(
+            'tests/ball_balance_test.c',
+            'code/ball_balance.c',
+            'code/rds3230.c',
+            'code/maix_ball_protocol.c'
+        )
     }
 )
 

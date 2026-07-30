@@ -5,6 +5,7 @@ typedef struct {
     uint32_t divided_clock_hz;
     uint16_t frequency_hz;
     uint32_t channel_mask;
+    bool is_timer_a;
     bool initialized;
 } pwm_state_t;
 
@@ -27,15 +28,20 @@ static ml_status_t pwm_claim_pin_resource(
         return board_resource_claim(
             ML_BOARD_RESOURCE_PB24, ML_BOARD_OWNER_PWM_TIMG12);
     }
+    if ((timer == TIMA1) && (channel == DL_TIMER_CC_1_INDEX)) {
+        return board_resource_claim(
+            ML_BOARD_RESOURCE_PB27, ML_BOARD_OWNER_PWM_TIMA1);
+    }
     return ML_STATUS_OK;
 }
 
 static pwm_state_t g_pwm_states[] = {
-    {TIMG0, 5000000UL, 0U, 0U, false},
-    {TIMG6, 10000000UL, 0U, 0U, false},
-    {TIMG7, 10000000UL, 0U, 0U, false},
-    {TIMG8, 5000000UL, 0U, 0U, false},
-    {TIMG12, 10000000UL, 0U, 0U, false}
+    {TIMG0, 5000000UL, 0U, 0U, false, false},
+    {TIMG6, 10000000UL, 0U, 0U, false, false},
+    {TIMG7, 10000000UL, 0U, 0U, false, false},
+    {TIMG8, 5000000UL, 0U, 0U, false, false},
+    {TIMG12, 10000000UL, 0U, 0U, false, false},
+    {TIMA1, 10000000UL, 0U, 0U, true, false}
 };
 
 static pwm_state_t *pwm_find_state(GPTIMER_Regs *timer)
@@ -104,6 +110,10 @@ static ml_status_t pwm_configure_pin(
         DL_GPIO_initPeripheralOutputFunction(
             ML_PWM_TIMG12_CH1_IOMUX, ML_PWM_TIMG12_CH1_FUNCTION);
         DL_GPIO_enableOutput(ML_PWM_TIMG12_CH1_PORT, ML_PWM_TIMG12_CH1_PIN);
+    } else if ((timer == TIMA1) && (channel == DL_TIMER_CC_1_INDEX)) {
+        DL_GPIO_initPeripheralOutputFunction(
+            ML_PWM_TIMA1_CH1_IOMUX, ML_PWM_TIMA1_CH1_FUNCTION);
+        DL_GPIO_enableOutput(ML_PWM_TIMA1_CH1_PORT, ML_PWM_TIMA1_CH1_PIN);
     } else {
         return ML_STATUS_UNSUPPORTED;
     }
@@ -156,6 +166,7 @@ ml_status_t pwm_init(
     ml_status_t status;
     DL_TimerG_ClockConfig clock_config;
     DL_TimerG_PWMConfig pwm_config;
+    DL_TimerA_PWMConfig pwm_a_config;
 
     status = pwm_pin_init(timer, channel, frequency_hz, &prescale, &period);
     if (status != ML_STATUS_OK) {
@@ -173,28 +184,55 @@ ml_status_t pwm_init(
         clock_config.divideRatio = DL_TIMER_CLOCK_DIVIDE_8;
         clock_config.prescale = prescale;
 
-        pwm_config.pwmMode = DL_TIMER_PWM_MODE_EDGE_ALIGN_UP;
-        pwm_config.period = period;
-        pwm_config.startTimer = DL_TIMER_START;
+        if (state->is_timer_a) {
+            pwm_a_config.pwmMode = DL_TIMER_PWM_MODE_EDGE_ALIGN_UP;
+            pwm_a_config.period = period;
+            pwm_a_config.isTimerWithFourCC = false;
+            pwm_a_config.startTimer = DL_TIMER_START;
 
-        DL_TimerG_reset(timer);
-        DL_TimerG_enablePower(timer);
-        DL_TimerG_setClockConfig(timer, &clock_config);
-        DL_TimerG_initPWMMode(timer, &pwm_config);
+            DL_TimerA_reset(timer);
+            DL_TimerA_enablePower(timer);
+            DL_TimerA_setClockConfig(timer, &clock_config);
+            DL_TimerA_initPWMMode(timer, &pwm_a_config);
+        } else {
+            pwm_config.pwmMode = DL_TIMER_PWM_MODE_EDGE_ALIGN_UP;
+            pwm_config.period = period;
+            pwm_config.startTimer = DL_TIMER_START;
+
+            DL_TimerG_reset(timer);
+            DL_TimerG_enablePower(timer);
+            DL_TimerG_setClockConfig(timer, &clock_config);
+            DL_TimerG_initPWMMode(timer, &pwm_config);
+        }
         state->frequency_hz = frequency_hz;
         state->initialized = true;
     }
 
-    DL_TimerG_setCaptureCompareValue(timer, 0U, channel);
-    DL_TimerG_setCaptureCompareOutCtl(timer, DL_TIMER_CC_OCTL_INIT_VAL_LOW,
-        DL_TIMER_CC_OCTL_INV_OUT_DISABLED, DL_TIMER_CC_OCTL_SRC_FUNCVAL,
-        channel);
-    DL_TimerG_setCaptCompUpdateMethod(
-        timer, DL_TIMER_CC_UPDATE_METHOD_IMMEDIATE, channel);
+    if (state->is_timer_a) {
+        DL_TimerA_setCaptureCompareValue(timer, 0U, channel);
+        DL_TimerA_setCaptureCompareOutCtl(timer,
+            DL_TIMER_CC_OCTL_INIT_VAL_LOW,
+            DL_TIMER_CC_OCTL_INV_OUT_DISABLED,
+            DL_TIMER_CC_OCTL_SRC_FUNCVAL, channel);
+        DL_TimerA_setCaptCompUpdateMethod(
+            timer, DL_TIMER_CC_UPDATE_METHOD_IMMEDIATE, channel);
+    } else {
+        DL_TimerG_setCaptureCompareValue(timer, 0U, channel);
+        DL_TimerG_setCaptureCompareOutCtl(timer,
+            DL_TIMER_CC_OCTL_INIT_VAL_LOW,
+            DL_TIMER_CC_OCTL_INV_OUT_DISABLED,
+            DL_TIMER_CC_OCTL_SRC_FUNCVAL, channel);
+        DL_TimerG_setCaptCompUpdateMethod(
+            timer, DL_TIMER_CC_UPDATE_METHOD_IMMEDIATE, channel);
+    }
 
     state->channel_mask |= output_mask;
     DL_Timer_setCCPDirection(timer, state->channel_mask);
-    DL_TimerG_enableClock(timer);
+    if (state->is_timer_a) {
+        DL_TimerA_enableClock(timer);
+    } else {
+        DL_TimerG_enableClock(timer);
+    }
 
     return ML_STATUS_OK;
 }
@@ -216,6 +254,10 @@ ml_status_t pwm_update(
 
     period = timer->COUNTERREGS.LOAD + 1U;
     compare = (uint32_t) (((uint64_t) duty * period) / ML_PWM_DUTY_MAX);
-    DL_TimerG_setCaptureCompareValue(timer, compare, channel);
+    if (state->is_timer_a) {
+        DL_TimerA_setCaptureCompareValue(timer, compare, channel);
+    } else {
+        DL_TimerG_setCaptureCompareValue(timer, compare, channel);
+    }
     return ML_STATUS_OK;
 }
