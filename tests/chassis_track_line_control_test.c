@@ -276,6 +276,114 @@ static void test_infrared_priority_over_route(void)
         "zero centroid route bias remains capped at 90 mm/s");
 }
 
+static void test_second_curve_b2_b0_fusion_replay(void)
+{
+    chassis_track_line_control_t control = {0};
+    chassis_track_line_control_output_t output;
+    line_sample_t inner_left = sample_for(0x02U);
+    line_sample_t lost = sample_for(0x00U);
+    float line_error = 29.0f / 161.0f;
+    float line_correction = 360.0f *
+        g_chassis_track_line_control_default_config.correction_ratio *
+        g_chassis_track_line_control_default_config.kp * line_error;
+    float route_correction = 0.37f * 0.5f *
+        g_chassis_track_line_control_default_config.effective_track_mm;
+    float combined_correction = line_correction + route_correction;
+
+    (void) chassis_track_line_control_init(&control,
+        &g_chassis_track_line_control_default_config);
+    (void) chassis_track_line_control_update(&control, &inner_left,
+        360.0f, 0.37f, &output);
+    (void) chassis_track_line_control_update(&control, &lost,
+        360.0f, 0.37f, &output);
+    check(!output.line_valid && output.recovering &&
+        near_value(output.correction_mm_s, line_correction, 0.001f),
+        "second-curve B0 keeps the confirmed B2 LF04 correction");
+    check(near_value(output.left_mm_s,
+              360.0f - combined_correction, 0.001f) &&
+        near_value(output.right_mm_s,
+              360.0f + combined_correction, 0.001f),
+        "second-curve B0 combines B2 hold with positive fusion route bias");
+
+    (void) chassis_track_line_control_update(&control, &lost,
+        360.0f, 2.0f, &output);
+    check(near_value(output.left_mm_s, 270.0f, 0.001f) &&
+        near_value(output.right_mm_s, 450.0f, 0.001f),
+        "lagging second-curve fusion assistance remains capped at 90 mm/s");
+}
+
+static void test_formal_three_source_fusion_replay(void)
+{
+    chassis_track_line_control_t control = {0};
+    chassis_track_line_control_output_t output;
+    chassis_track_line_fusion_request_t request;
+    line_sample_t inner_left = sample_for(0x02U);
+    line_sample_t outer_left = sample_for(0x01U);
+    line_sample_t outer_right = sample_for(0x08U);
+    line_sample_t lost = sample_for(0x00U);
+    line_sample_t centered = sample_for(0x06U);
+    float half_track = 0.5f *
+        g_chassis_track_line_control_default_config.effective_track_mm;
+    uint8_t cycle;
+
+    request.linear_mm_s = 360.0f;
+    request.route_feedforward_rad_s = 0.72f;
+    request.heading_feedback_rad_s = 0.35f;
+    request.heading_error_deg = 5.31f;
+    (void) chassis_track_line_control_init(&control,
+        &g_chassis_track_line_control_default_config);
+    (void) chassis_track_line_control_update_fused(&control,
+        &outer_right, &request, &output);
+    check(near_value(output.correction_mm_s, -120.0f, 0.001f) &&
+        near_value(output.route_feedforward_bias_mm_s,
+              0.72f * half_track, 0.001f) &&
+        near_value(output.heading_feedback_bias_mm_s,
+              0.35f * half_track, 0.001f) &&
+        near_value(output.line_weight, 1.0f, 0.001f) &&
+        near_value(output.final_steering_bias_mm_s,
+              -120.0f, 0.001f),
+        "latest first-curve B8 replay keeps LF04 authority over +114 route bias");
+    for (cycle = 0U; cycle < 20U; ++cycle) {
+        (void) chassis_track_line_control_update_fused(&control,
+            &lost, &request, &output);
+    }
+    check(!output.line_valid && output.recovering &&
+        near_value(output.line_weight, 1.0f, 0.001f) &&
+        near_value(output.final_steering_bias_mm_s,
+              -120.0f, 0.001f),
+        "formal B0 preserves the last confirmed LF04 recovery direction");
+
+    chassis_track_line_control_reset(&control);
+    (void) chassis_track_line_control_update_fused(&control,
+        &outer_left, &request, &output);
+    check(near_value(output.final_steering_bias_mm_s,
+              120.0f, 0.001f),
+        "same-direction route assistance remains capped by B1 limit");
+
+    chassis_track_line_control_reset(&control);
+    request.route_feedforward_rad_s = 0.72f;
+    request.heading_feedback_rad_s = 0.35f;
+    (void) chassis_track_line_control_update_fused(&control,
+        &centered, &request, &output);
+    check(near_value(output.correction_mm_s, 0.0f, 0.001f) &&
+        near_value(output.line_weight, 1.0f, 0.001f) &&
+        near_value(output.final_steering_bias_mm_s, 90.0f, 0.001f),
+        "centered LF04 allows route and heading assistance within normal cap");
+
+    chassis_track_line_control_reset(&control);
+    request.route_feedforward_rad_s = 0.0f;
+    request.heading_feedback_rad_s = -0.35f;
+    request.heading_error_deg = -24.3f;
+    for (cycle = 0U; cycle < 3U; ++cycle) {
+        (void) chassis_track_line_control_update_fused(&control,
+            &inner_left, &request, &output);
+    }
+    check(output.correction_mm_s > 0.0f &&
+        near_value(output.final_steering_bias_mm_s,
+              output.correction_mm_s, 0.001f),
+        "live B2 remains authoritative over opposing heading feedback");
+}
+
 static void test_outer_boost_memory_transitions(void)
 {
     chassis_track_line_control_t control = {0};
@@ -921,6 +1029,8 @@ int main(void)
     test_each_physical_sensor_strength();
     test_speed_ratio_and_wheel_limit();
     test_infrared_priority_over_route();
+    test_second_curve_b2_b0_fusion_replay();
+    test_formal_three_source_fusion_replay();
     test_outer_boost_memory_transitions();
     test_pd_damping_and_direct_reversal_confirmation();
     test_b0_holds_each_last_error();

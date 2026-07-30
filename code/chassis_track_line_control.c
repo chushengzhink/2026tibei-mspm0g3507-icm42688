@@ -457,6 +457,7 @@ static void line_control_limit_wheels(
         output->left_mm_s *= scale;
         output->right_mm_s *= scale;
         output->correction_mm_s *= scale;
+        output->final_steering_bias_mm_s *= scale;
     }
 }
 
@@ -505,9 +506,11 @@ void chassis_track_line_control_reset(
     control->has_valid_error = false;
 }
 
-ml_status_t chassis_track_line_control_update(
+static ml_status_t line_control_update_internal(
     chassis_track_line_control_t *control, const line_sample_t *sample,
     float requested_linear_mm_s, float requested_angular_rad_s,
+    const chassis_track_line_fusion_request_t *fusion_request,
+    bool formal_fusion,
     chassis_track_line_control_output_t *output)
 {
     chassis_track_line_state_t state;
@@ -588,9 +591,28 @@ ml_status_t chassis_track_line_control_update(
             control->config.outer_single_maximum_correction_mm_s;
     }
     half_track = control->config.effective_track_mm * 0.5f;
-    steering_bias_mm_s = line_control_steering_bias(
-        output->correction_mm_s, angular_rad_s * half_track,
-        maximum_correction_mm_s);
+    if (formal_fusion) {
+        output->route_feedforward_bias_mm_s =
+            fusion_request->route_feedforward_rad_s * half_track;
+        output->heading_feedback_bias_mm_s =
+            fusion_request->heading_feedback_rad_s * half_track;
+        output->line_weight = 1.0f;
+        steering_bias_mm_s = line_control_steering_bias(
+            output->correction_mm_s,
+            output->route_feedforward_bias_mm_s +
+                output->heading_feedback_bias_mm_s,
+            maximum_correction_mm_s);
+    } else {
+        output->route_feedforward_bias_mm_s =
+            angular_rad_s * half_track;
+        output->heading_feedback_bias_mm_s = 0.0f;
+        output->line_weight = 1.0f;
+        steering_bias_mm_s = line_control_steering_bias(
+            output->correction_mm_s,
+            output->route_feedforward_bias_mm_s,
+            maximum_correction_mm_s);
+    }
+    output->final_steering_bias_mm_s = steering_bias_mm_s;
     output->left_mm_s = linear_mm_s - steering_bias_mm_s;
     output->right_mm_s = linear_mm_s + steering_bias_mm_s;
     line_control_limit_wheels(control, output);
@@ -604,4 +626,33 @@ ml_status_t chassis_track_line_control_update(
     output->line_valid = line_valid;
     output->recovering = !line_valid;
     return ML_STATUS_OK;
+}
+
+ml_status_t chassis_track_line_control_update(
+    chassis_track_line_control_t *control, const line_sample_t *sample,
+    float requested_linear_mm_s, float requested_angular_rad_s,
+    chassis_track_line_control_output_t *output)
+{
+    return line_control_update_internal(control, sample,
+        requested_linear_mm_s, requested_angular_rad_s,
+        0, false, output);
+}
+
+ml_status_t chassis_track_line_control_update_fused(
+    chassis_track_line_control_t *control, const line_sample_t *sample,
+    const chassis_track_line_fusion_request_t *request,
+    chassis_track_line_control_output_t *output)
+{
+    if ((request == 0) ||
+        !line_control_float_valid(request->linear_mm_s) ||
+        !line_control_float_valid(request->route_feedforward_rad_s) ||
+        !line_control_float_valid(request->heading_feedback_rad_s) ||
+        !line_control_float_valid(request->heading_error_deg)) {
+        return ML_STATUS_INVALID_ARGUMENT;
+    }
+    return line_control_update_internal(control, sample,
+        request->linear_mm_s,
+        request->route_feedforward_rad_s +
+            request->heading_feedback_rad_s,
+        request, true, output);
 }

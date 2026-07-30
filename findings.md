@@ -162,3 +162,21 @@
 - The implemented guard saturates at 1200 mm, ignores B0 and opposite outer-single patterns for exit, and requires five accepted opposite non-outer samples after the distance gate. Repeated same-side B1/B8 does not reset travel; B15 still clears immediately.
 - The failed sequence regression produces about +89/+92 mm/s for confirmed early B4 and returns to positive B0 boost/hold, eliminating the observed multi-second -16 mm/s reversal.
 - Portable verification passes: host suite `18/18`, ARMCC sources `4/4`, both project XML files, `git diff --check`, and unchanged 500 mm/s, PWM 20000, and eight-cycle stall limits.
+
+## Phase 18 Formal Three-Source Fusion Evidence
+- The two latest attachment copies are byte-identical. The authoritative first monotonic session contains 187 rows from 100 to 18700 ms.
+- The car stops at about 6164.1 mm and 374.99 degrees; the stop command occurs near 6127.9 mm at 172.1 mm/s, followed by about 36.2 mm of coast.
+- The second straight already ends about 24 degrees ahead of the encoder route model. In the final 1000 mm, B0 occupies about 48.6%, recorded LF04 +120 mm/s occupies 65.7%, and at least one PWM reaches 20000 in 25.7% of samples.
+- Current formal arbitration calculates saturated negative heading feedback but discards it whenever the LF04 residual has the opposite sign. On the curve, feedforward plus limited heading feedback still requests about +39.6 mm/s while stale B1/B0 consumes the full +120 mm/s cap.
+- A read-only counterfactual replay using feedforward-first budget allocation, 120 ms B0 decay, 200+200 ms B1 taper, and 5-8 degree conflict attenuation reduces representative final biases to about +39.6 mm/s in long B0 and +52.5 mm/s in sustained conflicting B1.
+- The existing velocity mode already closes fused yaw-rate feedback at `Kp=0.20`; Phase 18 must not add a duplicate IMU control loop.
+- Current race link reports `RW-data=1040`, `ZI-data=29392`. Expanding 600 telemetry records from 44 to 52 bytes adds 4800 bytes and remains within device SRAM, subject to final link verification.
+
+## Phase 18 Hardware Rejection and Corrected Arbitration
+- The failed 27-column run contains 162 clean samples and ends at about 5997 mm because the car had already departed the line before completing the first semicircle.
+- At 1749-1945 mm, B8 requests `-120 mm/s`, while route feedforward is about `+77` and heading feedback reaches `+37`; the rejected budget logic outputs `+65..+84 mm/s`, the opposite of the live LF04 recovery direction.
+- By about 3019 mm, expected heading is 174.04 degrees but fused heading is only 137.86 degrees. First-curve B0 occupies about 66% and final steering is saturated for about 76% of samples.
+- Sustained B15 begins near 4525 mm and persists through the remaining 38 samples; it is a consequence of the earlier departure, not the initiating defect.
+- Restoring `22d672e` arbitration makes nonzero LF04 direction authoritative: opposite route/heading assistance is discarded, same-direction assistance may fill to the existing 90/120 mm/s cap, and B0 preserves the last confirmed recovery direction.
+- Split route/heading/final telemetry, the 360 +/- 5 degree three-cycle finish gate, the 36 mm stop lead, and all lower safety limits remain.
+- The public telemetry record remains 52 bytes and CSV remains 27 columns, but 600 RAM entries use an internal 44-byte representation to resolve the observed `0xC10` SRAM link overflow.

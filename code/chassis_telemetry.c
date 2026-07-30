@@ -2,10 +2,39 @@
 
 #include <float.h>
 
-typedef char chassis_telemetry_record_must_be_44_bytes[
-    (sizeof(chassis_telemetry_record_t) == 44U) ? 1 : -1];
+typedef char chassis_telemetry_record_must_be_52_bytes[
+    (sizeof(chassis_telemetry_record_t) == 52U) ? 1 : -1];
 
-static chassis_telemetry_record_t
+typedef struct {
+    uint32_t timestamp_ms;
+    uint8_t left_total_ticks_s24[3];
+    uint8_t right_total_ticks_s24[3];
+    int16_t x_quarter_mm;
+    int16_t y_quarter_mm;
+    uint8_t encoder_heading_cdeg_s24[3];
+    uint8_t fused_heading_cdeg_s24[3];
+    int16_t imu_yaw_cdeg;
+    int16_t fused_yaw_rate_cdps;
+    int16_t target_center_dmm_s;
+    int16_t actual_center_dmm_s;
+    uint16_t pwm_left_count;
+    uint16_t pwm_right_count;
+    uint8_t fusion_active;
+    uint8_t line_bits;
+    uint8_t line_state_flags;
+    int8_t line_correction_mm_s;
+    uint16_t mission_progress_mm;
+    uint16_t expected_heading_cdeg;
+    int8_t route_feedforward_bias_mm_s;
+    int8_t heading_feedback_bias_mm_s;
+    uint8_t line_weight_pct;
+    int8_t final_steering_bias_mm_s;
+} chassis_telemetry_storage_record_t;
+
+typedef char chassis_telemetry_storage_record_must_be_44_bytes[
+    (sizeof(chassis_telemetry_storage_record_t) == 44U) ? 1 : -1];
+
+static chassis_telemetry_storage_record_t
     g_records[CHASSIS_TELEMETRY_CAPACITY];
 static uint16_t g_record_count;
 static bool g_overflowed;
@@ -14,6 +43,12 @@ static uint32_t g_session_total_ms;
 static uint8_t g_line_bits;
 static uint8_t g_line_state_flags;
 static int8_t g_line_correction_mm_s;
+static uint16_t g_mission_progress_mm;
+static uint16_t g_expected_heading_cdeg;
+static int8_t g_route_feedforward_bias_mm_s;
+static int8_t g_heading_feedback_bias_mm_s;
+static uint8_t g_line_weight_pct;
+static int8_t g_final_steering_bias_mm_s;
 static bool g_session_started;
 static bool g_session_finished;
 
@@ -32,6 +67,80 @@ static int32_t telemetry_heading_to_cdeg(float degrees)
         return INT32_MIN;
     }
     return (int32_t) (degrees * 100.0f);
+}
+
+static int16_t telemetry_mm_to_quarter_mm(float value)
+{
+    if (value >= 8191.75f) {
+        return INT16_MAX;
+    }
+    if (value <= -8192.0f) {
+        return INT16_MIN;
+    }
+    return (int16_t) (value * 4.0f);
+}
+
+static void telemetry_int24_encode(uint8_t bytes[3], int32_t value)
+{
+    uint32_t encoded;
+
+    if (value > 8388607) {
+        value = 8388607;
+    } else if (value < -8388608) {
+        value = -8388608;
+    }
+    encoded = ((uint32_t) value) & 0x00FFFFFFU;
+    bytes[0] = (uint8_t) encoded;
+    bytes[1] = (uint8_t) (encoded >> 8U);
+    bytes[2] = (uint8_t) (encoded >> 16U);
+}
+
+static int32_t telemetry_int24_decode(const uint8_t bytes[3])
+{
+    uint32_t encoded = (uint32_t) bytes[0] |
+        ((uint32_t) bytes[1] << 8U) |
+        ((uint32_t) bytes[2] << 16U);
+
+    if ((encoded & 0x00800000U) != 0U) {
+        return -(int32_t) (((~encoded) + 1U) & 0x00FFFFFFU);
+    }
+    return (int32_t) encoded;
+}
+
+static void telemetry_expand_record(
+    const chassis_telemetry_storage_record_t *stored,
+    chassis_telemetry_record_t *record)
+{
+    record->timestamp_ms = stored->timestamp_ms;
+    record->left_total_ticks = telemetry_int24_decode(
+        stored->left_total_ticks_s24);
+    record->right_total_ticks = telemetry_int24_decode(
+        stored->right_total_ticks_s24);
+    record->x_mm = (float) stored->x_quarter_mm * 0.25f;
+    record->y_mm = (float) stored->y_quarter_mm * 0.25f;
+    record->encoder_heading_cdeg = telemetry_int24_decode(
+        stored->encoder_heading_cdeg_s24);
+    record->fused_heading_cdeg = telemetry_int24_decode(
+        stored->fused_heading_cdeg_s24);
+    record->imu_yaw_cdeg = stored->imu_yaw_cdeg;
+    record->fused_yaw_rate_cdps = stored->fused_yaw_rate_cdps;
+    record->target_center_dmm_s = stored->target_center_dmm_s;
+    record->actual_center_dmm_s = stored->actual_center_dmm_s;
+    record->pwm_left_count = stored->pwm_left_count;
+    record->pwm_right_count = stored->pwm_right_count;
+    record->fusion_active = stored->fusion_active;
+    record->line_bits = stored->line_bits;
+    record->line_state_flags = stored->line_state_flags;
+    record->line_correction_mm_s = stored->line_correction_mm_s;
+    record->mission_progress_mm = stored->mission_progress_mm;
+    record->expected_heading_cdeg = stored->expected_heading_cdeg;
+    record->route_feedforward_bias_mm_s =
+        stored->route_feedforward_bias_mm_s;
+    record->heading_feedback_bias_mm_s =
+        stored->heading_feedback_bias_mm_s;
+    record->line_weight_pct = stored->line_weight_pct;
+    record->final_steering_bias_mm_s =
+        stored->final_steering_bias_mm_s;
 }
 
 static int16_t telemetry_wrapped_degrees_to_cdeg(float degrees)
@@ -76,6 +185,39 @@ static int8_t telemetry_correction_to_mm_s(float correction_mm_s)
         return INT8_MIN;
     }
     return (int8_t) correction_mm_s;
+}
+
+static uint16_t telemetry_positive_to_uint16(float value)
+{
+    if (value <= 0.0f) {
+        return 0U;
+    }
+    if (value >= 65535.0f) {
+        return UINT16_MAX;
+    }
+    return (uint16_t) (value + 0.5f);
+}
+
+static uint16_t telemetry_positive_heading_to_cdeg(float degrees)
+{
+    if (degrees <= 0.0f) {
+        return 0U;
+    }
+    if (degrees >= 655.35f) {
+        return UINT16_MAX;
+    }
+    return (uint16_t) (degrees * 100.0f + 0.5f);
+}
+
+static uint8_t telemetry_weight_to_percent(float weight)
+{
+    if (weight <= 0.0f) {
+        return 0U;
+    }
+    if (weight >= 1.0f) {
+        return 100U;
+    }
+    return (uint8_t) (weight * 100.0f + 0.5f);
 }
 
 static uint16_t telemetry_append_char(
@@ -164,6 +306,12 @@ void chassis_telemetry_clear(void)
     g_line_bits = 0U;
     g_line_state_flags = 0U;
     g_line_correction_mm_s = 0;
+    g_mission_progress_mm = 0U;
+    g_expected_heading_cdeg = 0U;
+    g_route_feedforward_bias_mm_s = 0;
+    g_heading_feedback_bias_mm_s = 0;
+    g_line_weight_pct = 0U;
+    g_final_steering_bias_mm_s = 0;
     g_session_started = false;
     g_session_finished = false;
 }
@@ -216,6 +364,38 @@ void chassis_telemetry_set_line_correction(float correction_mm_s)
     }
 }
 
+void chassis_telemetry_set_track_fusion(float mission_progress_mm,
+    float expected_heading_deg, float route_feedforward_bias_mm_s,
+    float heading_feedback_bias_mm_s, float line_weight,
+    float final_steering_bias_mm_s)
+{
+    if (!telemetry_float_valid(mission_progress_mm) ||
+        !telemetry_float_valid(expected_heading_deg) ||
+        !telemetry_float_valid(route_feedforward_bias_mm_s) ||
+        !telemetry_float_valid(heading_feedback_bias_mm_s) ||
+        !telemetry_float_valid(line_weight) ||
+        !telemetry_float_valid(final_steering_bias_mm_s)) {
+        g_mission_progress_mm = 0U;
+        g_expected_heading_cdeg = 0U;
+        g_route_feedforward_bias_mm_s = 0;
+        g_heading_feedback_bias_mm_s = 0;
+        g_line_weight_pct = 0U;
+        g_final_steering_bias_mm_s = 0;
+        return;
+    }
+    g_mission_progress_mm = telemetry_positive_to_uint16(
+        mission_progress_mm);
+    g_expected_heading_cdeg =
+        telemetry_positive_heading_to_cdeg(expected_heading_deg);
+    g_route_feedforward_bias_mm_s = telemetry_correction_to_mm_s(
+        route_feedforward_bias_mm_s);
+    g_heading_feedback_bias_mm_s = telemetry_correction_to_mm_s(
+        heading_feedback_bias_mm_s);
+    g_line_weight_pct = telemetry_weight_to_percent(line_weight);
+    g_final_steering_bias_mm_s = telemetry_correction_to_mm_s(
+        final_steering_bias_mm_s);
+}
+
 ml_status_t chassis_telemetry_record(uint32_t timestamp_ms,
     int32_t left_total_ticks, int32_t right_total_ticks,
     float x_mm, float y_mm, float encoder_heading_deg,
@@ -224,7 +404,7 @@ ml_status_t chassis_telemetry_record(uint32_t timestamp_ms,
     float actual_center_mm_s, uint16_t pwm_left_count,
     uint16_t pwm_right_count, bool fusion_active)
 {
-    chassis_telemetry_record_t *record;
+    chassis_telemetry_storage_record_t *record;
 
     if (!telemetry_float_valid(x_mm) || !telemetry_float_valid(y_mm) ||
         !telemetry_float_valid(encoder_heading_deg) ||
@@ -249,14 +429,16 @@ ml_status_t chassis_telemetry_record(uint32_t timestamp_ms,
         record = &g_records[g_record_count++];
     }
     record->timestamp_ms = timestamp_ms;
-    record->left_total_ticks = left_total_ticks;
-    record->right_total_ticks = right_total_ticks;
-    record->x_mm = x_mm;
-    record->y_mm = y_mm;
-    record->encoder_heading_cdeg =
-        telemetry_heading_to_cdeg(encoder_heading_deg);
-    record->fused_heading_cdeg =
-        telemetry_heading_to_cdeg(fused_heading_deg);
+    telemetry_int24_encode(record->left_total_ticks_s24,
+        left_total_ticks);
+    telemetry_int24_encode(record->right_total_ticks_s24,
+        right_total_ticks);
+    record->x_quarter_mm = telemetry_mm_to_quarter_mm(x_mm);
+    record->y_quarter_mm = telemetry_mm_to_quarter_mm(y_mm);
+    telemetry_int24_encode(record->encoder_heading_cdeg_s24,
+        telemetry_heading_to_cdeg(encoder_heading_deg));
+    telemetry_int24_encode(record->fused_heading_cdeg_s24,
+        telemetry_heading_to_cdeg(fused_heading_deg));
     record->imu_yaw_cdeg =
         telemetry_wrapped_degrees_to_cdeg(imu_yaw_deg);
     record->fused_yaw_rate_cdps =
@@ -271,6 +453,15 @@ ml_status_t chassis_telemetry_record(uint32_t timestamp_ms,
     record->line_bits = g_line_bits;
     record->line_state_flags = g_line_state_flags;
     record->line_correction_mm_s = g_line_correction_mm_s;
+    record->mission_progress_mm = g_mission_progress_mm;
+    record->expected_heading_cdeg = g_expected_heading_cdeg;
+    record->route_feedforward_bias_mm_s =
+        g_route_feedforward_bias_mm_s;
+    record->heading_feedback_bias_mm_s =
+        g_heading_feedback_bias_mm_s;
+    record->line_weight_pct = g_line_weight_pct;
+    record->final_steering_bias_mm_s =
+        g_final_steering_bias_mm_s;
     return ML_STATUS_OK;
 }
 
@@ -293,7 +484,7 @@ ml_status_t chassis_telemetry_get(
     if (index >= g_record_count) {
         return ML_STATUS_BUFFER_EMPTY;
     }
-    *record = g_records[index];
+    telemetry_expand_record(&g_records[index], record);
     return ML_STATUS_OK;
 }
 
@@ -306,12 +497,15 @@ ml_status_t chassis_telemetry_export_csv(
         "fusion_active,elapsed_ms,lap_total_ms,target_center_mm_s,"
         "actual_center_mm_s,left_pwm_count,right_pwm_count,line_bits,"
         "line_correction_mm_s,line_usable,line_recovering,"
-        "line_pattern_invalid\r\n";
-    char line[208];
+        "line_pattern_invalid,mission_progress_mm,expected_heading_deg,"
+        "route_feedforward_bias_mm_s,heading_feedback_bias_mm_s,"
+        "line_weight_pct,final_steering_bias_mm_s\r\n";
+    char line[256];
     uint16_t line_length;
     uint16_t index;
     int32_t x_milli;
     int32_t y_milli;
+    chassis_telemetry_record_t record;
     ml_status_t status;
 
     if (writer == 0) {
@@ -320,17 +514,18 @@ ml_status_t chassis_telemetry_export_csv(
     status = writer(header, (uint16_t) (sizeof(header) - 1U), context);
     for (index = 0U;
          (index < g_record_count) && (status == ML_STATUS_OK); ++index) {
-        x_milli = telemetry_mm_to_milli(g_records[index].x_mm);
-        y_milli = telemetry_mm_to_milli(g_records[index].y_mm);
+        telemetry_expand_record(&g_records[index], &record);
+        x_milli = telemetry_mm_to_milli(record.x_mm);
+        y_milli = telemetry_mm_to_milli(record.y_mm);
         line_length = 0U;
         line_length = telemetry_append_uint32(line, line_length,
-            g_records[index].timestamp_ms);
+            record.timestamp_ms);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_int32(line, line_length,
-            g_records[index].left_total_ticks);
+            record.left_total_ticks);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_int32(line, line_length,
-            g_records[index].right_total_ticks);
+            record.right_total_ticks);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_fixed(line, line_length,
             x_milli, 1000U, 3U);
@@ -339,57 +534,75 @@ ml_status_t chassis_telemetry_export_csv(
             y_milli, 1000U, 3U);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_fixed(line, line_length,
-            g_records[index].encoder_heading_cdeg, 100U, 2U);
+            record.encoder_heading_cdeg, 100U, 2U);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_fixed(line, line_length,
-            g_records[index].fused_heading_cdeg, 100U, 2U);
+            record.fused_heading_cdeg, 100U, 2U);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_fixed(line, line_length,
-            g_records[index].imu_yaw_cdeg, 100U, 2U);
+            record.imu_yaw_cdeg, 100U, 2U);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_fixed(line, line_length,
-            g_records[index].fused_yaw_rate_cdps, 100U, 2U);
+            record.fused_yaw_rate_cdps, 100U, 2U);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_uint32(line, line_length,
-            g_records[index].fusion_active);
+            record.fusion_active);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_uint32(line, line_length,
             g_session_started ? (uint32_t)
-                (g_records[index].timestamp_ms - g_session_start_ms) :
-                g_records[index].timestamp_ms);
+                (record.timestamp_ms - g_session_start_ms) :
+                record.timestamp_ms);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_uint32(line, line_length,
             g_session_finished ? g_session_total_ms : 0U);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_fixed(line, line_length,
-            g_records[index].target_center_dmm_s, 10U, 1U);
+            record.target_center_dmm_s, 10U, 1U);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_fixed(line, line_length,
-            g_records[index].actual_center_dmm_s, 10U, 1U);
+            record.actual_center_dmm_s, 10U, 1U);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_uint32(line, line_length,
-            g_records[index].pwm_left_count);
+            record.pwm_left_count);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_uint32(line, line_length,
-            g_records[index].pwm_right_count);
+            record.pwm_right_count);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_uint32(line, line_length,
-            g_records[index].line_bits);
+            record.line_bits);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_int32(line, line_length,
-            g_records[index].line_correction_mm_s);
+            record.line_correction_mm_s);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_uint32(line, line_length,
-            (g_records[index].line_state_flags &
+            (record.line_state_flags &
              CHASSIS_TELEMETRY_LINE_USABLE) != 0U ? 1U : 0U);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_uint32(line, line_length,
-            (g_records[index].line_state_flags &
+            (record.line_state_flags &
              CHASSIS_TELEMETRY_LINE_RECOVERING) != 0U ? 1U : 0U);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_uint32(line, line_length,
-            (g_records[index].line_state_flags &
+            (record.line_state_flags &
              CHASSIS_TELEMETRY_LINE_PATTERN_INVALID) != 0U ? 1U : 0U);
+        line_length = telemetry_append_char(line, line_length, ',');
+        line_length = telemetry_append_uint32(line, line_length,
+            record.mission_progress_mm);
+        line_length = telemetry_append_char(line, line_length, ',');
+        line_length = telemetry_append_fixed(line, line_length,
+            record.expected_heading_cdeg, 100U, 2U);
+        line_length = telemetry_append_char(line, line_length, ',');
+        line_length = telemetry_append_int32(line, line_length,
+            record.route_feedforward_bias_mm_s);
+        line_length = telemetry_append_char(line, line_length, ',');
+        line_length = telemetry_append_int32(line, line_length,
+            record.heading_feedback_bias_mm_s);
+        line_length = telemetry_append_char(line, line_length, ',');
+        line_length = telemetry_append_uint32(line, line_length,
+            record.line_weight_pct);
+        line_length = telemetry_append_char(line, line_length, ',');
+        line_length = telemetry_append_int32(line, line_length,
+            record.final_steering_bias_mm_s);
         line_length = telemetry_append_char(line, line_length, '\r');
         line_length = telemetry_append_char(line, line_length, '\n');
         status = writer(line, line_length, context);

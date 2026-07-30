@@ -153,7 +153,7 @@ static void track_show(const chassis_status_t *status)
         }
     } else if (g_track_app.state == TRACK_APP_READY) {
         track_show_line(1U, g_track_app.line_only_mode ?
-            "LF ONLY READY" : "READY PRESS C");
+            "LF ONLY READY" : "RACE FUSION");
         if (g_track_app.line_only_mode) {
             (void) snprintf(line, sizeof(line), "S%03u NO LIMIT",
                 (unsigned int) g_track_app.line_test_output.
@@ -401,6 +401,7 @@ void chassis_track_app_poll(void)
     icm42688_service_event_t imu_event;
     chassis_status_t status;
     line_sample_t line;
+    chassis_track_line_fusion_request_t fusion_request;
     float center_distance_mm;
     ml_status_t command_status;
     bool key_press;
@@ -548,6 +549,8 @@ void chassis_track_app_poll(void)
         if (g_track_app.line_only_mode) {
             chassis_telemetry_session_finish(status.timestamp_ms);
             chassis_telemetry_set_line_correction(0.0f);
+            chassis_telemetry_set_track_fusion(
+                0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
             (void) chassis_capture_telemetry_now();
         }
         g_track_app.output.state = CHASSIS_TRACK_FAULT_EMERGENCY;
@@ -593,6 +596,8 @@ void chassis_track_app_poll(void)
                 chassis_stop();
                 g_track_app.velocity_started = false;
                 chassis_telemetry_set_line_correction(0.0f);
+                chassis_telemetry_set_track_fusion(
+                    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
                 if ((g_track_app.line_only_mode &&
                      (g_track_app.line_test_output.state ==
                       CHASSIS_TRACK_LINE_TEST_BRAKING)) ||
@@ -625,14 +630,26 @@ void chassis_track_app_poll(void)
                 g_track_app.state = TRACK_APP_FAULT;
             }
         } else if (g_track_app.state == TRACK_APP_RUNNING) {
-            command_status = chassis_track_line_control_update(
-                &g_track_app.line_control, &line,
-                g_track_app.line_only_mode ?
-                    g_track_app.line_test_output.requested_speed_mm_s :
-                    g_track_app.output.linear_mm_s,
-                g_track_app.line_only_mode ? 0.0f :
-                    g_track_app.output.angular_rad_s,
-                &g_track_app.line_control_output);
+            if (g_track_app.line_only_mode) {
+                command_status = chassis_track_line_control_update(
+                    &g_track_app.line_control, &line,
+                    g_track_app.line_test_output.requested_speed_mm_s,
+                    0.0f, &g_track_app.line_control_output);
+            } else {
+                fusion_request.linear_mm_s =
+                    g_track_app.output.linear_mm_s;
+                fusion_request.route_feedforward_rad_s =
+                    g_track_app.output.route_feedforward_rad_s;
+                fusion_request.heading_feedback_rad_s =
+                    g_track_app.output.heading_feedback_rad_s;
+                fusion_request.heading_error_deg =
+                    g_track_app.output.heading_error_deg;
+                command_status =
+                    chassis_track_line_control_update_fused(
+                        &g_track_app.line_control, &line,
+                        &fusion_request,
+                        &g_track_app.line_control_output);
+            }
             if (command_status == ML_STATUS_OK) {
                 chassis_telemetry_set_line_state(line.black_bits,
                     g_track_app.line_control_output.line_valid,
@@ -640,6 +657,18 @@ void chassis_track_app_poll(void)
                     false);
                 chassis_telemetry_set_line_correction(
                     g_track_app.line_control_output.correction_mm_s);
+                if (!g_track_app.line_only_mode) {
+                    chassis_telemetry_set_track_fusion(
+                        g_track_app.output.progress_mm,
+                        g_track_app.output.expected_heading_deg,
+                        g_track_app.line_control_output.
+                            route_feedforward_bias_mm_s,
+                        g_track_app.line_control_output.
+                            heading_feedback_bias_mm_s,
+                        g_track_app.line_control_output.line_weight,
+                        g_track_app.line_control_output.
+                            final_steering_bias_mm_s);
+                }
             }
             if ((command_status == ML_STATUS_OK) &&
                 (g_track_app.state == TRACK_APP_RUNNING)) {

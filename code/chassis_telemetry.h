@@ -30,6 +30,12 @@ typedef struct {
     uint8_t line_bits;
     uint8_t line_state_flags;
     int8_t line_correction_mm_s;
+    uint16_t mission_progress_mm;
+    uint16_t expected_heading_cdeg;
+    int8_t route_feedforward_bias_mm_s;
+    int8_t heading_feedback_bias_mm_s;
+    uint8_t line_weight_pct;
+    int8_t final_steering_bias_mm_s;
 } chassis_telemetry_record_t;
 
 typedef ml_status_t (*chassis_telemetry_writer_t)(
@@ -43,6 +49,10 @@ void chassis_telemetry_set_line_bits(uint8_t line_bits);
 void chassis_telemetry_set_line_state(uint8_t line_bits,
     bool line_usable, bool line_recovering, bool pattern_invalid);
 void chassis_telemetry_set_line_correction(float correction_mm_s);
+void chassis_telemetry_set_track_fusion(float mission_progress_mm,
+    float expected_heading_deg, float route_feedforward_bias_mm_s,
+    float heading_feedback_bias_mm_s, float line_weight,
+    float final_steering_bias_mm_s);
 ml_status_t chassis_telemetry_record(uint32_t timestamp_ms,
     int32_t left_total_ticks, int32_t right_total_ticks,
     float x_mm, float y_mm, float encoder_heading_deg,

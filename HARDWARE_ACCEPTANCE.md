@@ -35,7 +35,7 @@
 | 编码器单圈初验 | 左轮 `1456 tick`，右轮 `|tick|=1498`，两侧 `BAD` 增量均为 0，均通过 ±5% 门槛 |
 | 滚动标定暂定值 | 正向 `L7037/R6951`、反向 `L7110/R6987`；左/右 `mm_per_tick=0.1413727/0.1434926` |
 | 当前待验证参数 | 左右 `mm_per_tick` 和 `effective_track_mm=214.2 mm`；修改后的固件必须重新 Rebuild、烧录并复验 |
-| LF04四路物理质心控制、纯LF04诊断、固定`WF`白底门、GPIO输入防护、44字节遥测与分级竞速修改后验证 | 新源码主机测试、ARMCC检查、竞速/默认Rebuild和实车复验均须重新执行 |
+| LF04四路物理质心控制、纯LF04诊断、固定`WF`白底门、GPIO输入防护、27列三源融合遥测与正式竞速LF04优先仲裁 | 新源码主机测试已通过；ARMCC、竞速/默认Rebuild和实车复验仍须执行 |
 
 ### 所需工具
 
@@ -199,15 +199,15 @@
 6. 再发送一次单个 `D`，必须重复得到相同表头且没有乱码。
 
 ```text
-time_ms,left_ticks,right_ticks,x_mm,y_mm,encoder_heading_deg,fused_heading_deg,imu_yaw_deg,fused_yaw_rate_dps,fusion_active,elapsed_ms,lap_total_ms,target_center_mm_s,actual_center_mm_s,left_pwm_count,right_pwm_count,line_bits,line_correction_mm_s,line_usable,line_recovering,line_pattern_invalid
+time_ms,left_ticks,right_ticks,x_mm,y_mm,encoder_heading_deg,fused_heading_deg,imu_yaw_deg,fused_yaw_rate_dps,fusion_active,elapsed_ms,lap_total_ms,target_center_mm_s,actual_center_mm_s,left_pwm_count,right_pwm_count,line_bits,line_correction_mm_s,line_usable,line_recovering,line_pattern_invalid,mission_progress_mm,expected_heading_deg,route_feedforward_bias_mm_s,heading_feedback_bias_mm_s,line_weight_pct,final_steering_bias_mm_s
 ```
 
-空缓存表头连同末尾CRLF共298字节，共21列；十六进制以`74 69 6D 65 5F 6D 73`开头，以`69 64 0D 0A`结尾。
+空缓存表头连同末尾CRLF共435字节，共27列；十六进制以`74 69 6D 65 5F 6D 73`开头，以`5F 73 0D 0A`结尾。
 
 - [ ] 单个 `D`能够立即触发导出。
 - [ ] 两次表头均完整，不含 `~`、`}k`或其他乱码。
 
-**立即停止：** 单个 `D`无输出、必须凑多个字符才响应、表头不是298字节或乱码。保持12 V断开，保存第一次响应的原始十六进制并检查PA10波形；PA10应空闲为约3.3 V，115200波特率的单个位宽约为`8.68 us`。本项通过前不得进入架空运动。
+**立即停止：** 单个 `D`无输出、必须凑多个字符才响应、表头不是435字节或乱码。保持12 V断开，保存第一次响应的原始十六进制并检查PA10波形；PA10应空闲为约3.3 V，115200波特率的单个位宽约为`8.68 us`。本项通过前不得进入架空运动。
 
 ### 无电机融合方向调试
 
@@ -222,7 +222,7 @@ time_ms,left_ticks,right_ticks,x_mm,y_mm,encoder_heading_deg,fused_heading_deg,i
 
 - [ ] `F`没有清空RAM或启动电机。
 - [ ] 采样时中键和方向键均不启动运动，`D/C`不执行。
-- [ ] `S`停止采样后`D`能完整导出298字节表头和数据行。
+- [ ] `S`停止采样后`D`能完整导出435字节表头和数据行。
 - [ ] 顺/逆时针符号、融合有效位和静止回归趋势符合预期。
 
 ### 五向键映射
@@ -583,10 +583,10 @@ chassis_rotate_deg(-360.0f, 60.0f);
 CSV 表头应为：
 
 ```text
-time_ms,left_ticks,right_ticks,x_mm,y_mm,encoder_heading_deg,fused_heading_deg,imu_yaw_deg,fused_yaw_rate_dps,fusion_active,elapsed_ms,lap_total_ms,target_center_mm_s,actual_center_mm_s,left_pwm_count,right_pwm_count,line_bits,line_correction_mm_s,line_usable,line_recovering,line_pattern_invalid
+time_ms,left_ticks,right_ticks,x_mm,y_mm,encoder_heading_deg,fused_heading_deg,imu_yaw_deg,fused_yaw_rate_dps,fusion_active,elapsed_ms,lap_total_ms,target_center_mm_s,actual_center_mm_s,left_pwm_count,right_pwm_count,line_bits,line_correction_mm_s,line_usable,line_recovering,line_pattern_invalid,mission_progress_mm,expected_heading_deg,route_feedforward_bias_mm_s,heading_feedback_bias_mm_s,line_weight_pct,final_steering_bias_mm_s
 ```
 
-记录频率为10 Hz，每条44字节，最多600条，约60秒运动数据；缓冲满后停止新增且不覆盖旧记录。同时间戳立即快照覆盖上一条，故导出时间戳严格递增。串口工具必须关闭“发→/收←”方向标记、时间标签、定时发送和自动换行，这些界面文字不是固件CSV内容。
+记录频率为10 Hz，公开记录结构为52字节、CSV为27列，最多600条，约60秒运动数据；RAM内部使用44字节紧凑记录保存同等字段，其中tick和航向保持原精度，x/y量化分辨率为0.25 mm。缓冲满后停止新增且不覆盖旧记录。同时间戳立即快照覆盖上一条，故导出时间戳严格递增。串口工具必须关闭“发→/收←”方向标记、时间标签、定时发送和自动换行，这些界面文字不是固件CSV内容。
 
 ### 分析规则
 
@@ -610,7 +610,7 @@ time_ms,left_ticks,right_ticks,x_mm,y_mm,encoder_heading_deg,fused_heading_deg,i
 
 ### 通过门槛
 
-- [ ] CSV表头和21列数据完整，时间戳严格递增，累计融合航向可连续越过180°并达到约360°。
+- [ ] CSV表头和27列数据完整，时间戳严格递增，累计融合航向可连续越过180°并达到约360°。
 - [ ] 导出前全程保持 5 V，且已按“先 `D` 并核验、后 `C`”完成数据保存。
 - [ ] 已利用时间戳间隔正确标出500 mm、`+90°`和`-90°`三个地面运动段。
 - [ ] 左右 tick 符号与运动方向一致，没有突跳或长时间零反馈。
@@ -693,12 +693,12 @@ time_ms,left_ticks,right_ticks,x_mm,y_mm,encoder_heading_deg,fused_heading_deg,i
 
 ### 纯LF04诊断先行验收
 
-1. 烧录竞速工程后把车放白底，上电前按住上键；完成白底/IMU校准后松开，必须进入`LF ONLY READY`。不按上键重新上电必须仍进入普通`READY PRESS C`。
+1. 烧录竞速工程后把车放白底，上电前按住上键；完成白底/IMU校准后松开，必须进入`LF ONLY READY`。不按上键重新上电必须进入正式`RACE FUSION`。
 2. READY页确认上/下键只能在60、120、200、280、350 mm/s之间选择，中键以外的按键不能启动；运行中按上/下键目标速度不得改变。
 3. `LF ONLY READY`不得显示`ALIGN BOTH`或位型许可计数。分别在B0、四个单探头及多探头位型下按中键，都必须立即开始；初始B0按质心误差0直行并开始累计保持时间。
 4. 先在直线段选择60 mm/s并按中键。确认目标每20 ms最多增加8 mm/s、IMU转动不产生额外轮差、编码器闭环/堵转/中键急停均有效；超过1000 mm和6141.6 mm都不得自动制动，回到起点后由中键锁定急停。
 5. 让位型在`RE B1/RD B2/R9 B6/RB B4/R7 B8`之间切换：B1/B8在60 mm/s仍立即产生约`±21 mm/s`增强纠偏，B2/B4稳态约为`±2.85 mm/s`，B2/B4回中时允许出现小于1 mm/s的单周期反向D阻尼。`B2→B4`直接反向的首周期纠偏必须为0，连续第二周期才接受B4；`B2→B6→B4`则不延迟。从B1/B8进入B0时持续保持外侧增强；随后出现对侧有效位型时，首个反向周期为0，第二周期必须立即切换到对侧普通PD，不能继续输出旧方向的89–120 mm/s弯道偏置。纯LF04和正式竞速均不得启用请求行程弯道锁存。
-6. 中键锁停后保持5 V，导出并保存21列CSV，确认含目标/实际速度、PWM、位型、有符号纠偏量和三列循迹状态；末条应为`line_correction_mm_s=0`且`lap_total_ms`为本次运行时间。确认保存后才清空记录。下一次测试必须断电重启并重新进入纯LF04模式，READY仍不要求双组同时有效。
+6. 中键锁停后保持5 V，导出并保存27列CSV，确认含目标/实际速度、PWM、位型、有符号纠偏量和三列循迹状态；纯LF04下六个正式融合新增列应为0，末条应为`line_correction_mm_s=0`且`lap_total_ms`为本次运行时间。确认保存后才清空记录。下一次测试必须断电重启并重新进入纯LF04模式，READY仍不要求双组同时有效。
 7. 依次完成60、120、200、280、350 mm/s的短距离方向确认和整圈测试，280和350 mm/s各连续完成两圈并分别保存CSV。对比修改前后的直线段`fused_yaw_rate_dps`摆幅、`line_correction_mm_s`正负切换次数和B6占比；整圈能力不得下降。重点确认两个弯道之间存在稳定的低纠偏直线段，单圈累计融合航向不应超过约420°，不得再次出现从首次B1起持续十几秒的同向89–120 mm/s纠偏。任何明显偏离、振荡、堵转或完全脱线都必须人工中键急停并停止升级。
 
 > RAM遥测只保留前约60秒且满后不覆盖。60 mm/s整圈标称约102秒，CSV可能在回到起点前停止新增，但车辆不得因此停车；120 mm/s及以上的标称整圈时间在缓冲容量内。
@@ -718,17 +718,17 @@ time_ms,left_ticks,right_ticks,x_mm,y_mm,encoder_heading_deg,fused_heading_deg,i
 
 1. 上电时放在白底并保持静止；LF04原始值必须连续10个20 ms样本为`RF`且IMU校准完成后，才允许进入READY。IMU先完成但白底未稳定时必须显示`LF WHITE WAIT`，电机保持锁定；稳定计数中任何非`RF`样本必须清零。
 2. READY页白底必须显示`RF WF B0`。LF04模块横向垂直于车身中心线安装；人工从左向右横移黑线，记录完整位型序列。B1-B15全部按`-40.25/-7.25/+7.25/+40.25 mm`物理质心计算，B6/B9/B15应居中；随后把车放在A点并沿AB顺时针对准，任何LF04位型均不参与竞速启动许可。
-3. 烧录stage 0竞速固件后先保持12 V断开。进入`READY PRESS C`后按中键，允许短暂进入RUN；因无编码器反馈，约160 ms后应锁停并显示`TRACK STALL`，不得被`TRACK HW FAULT/STATUS 05`覆盖。RUN期间第四行每秒交替显示`Rr Ww Bb`和`LFb Ln DnHn`。架空后分别在白底和黑线上运行电机；显示`LF GPIO FAULT`时必须立即停止并检查输入配置、3.3 V供电、共地和接线。
-4. 重新上电并架空车轮、接通12 V。确认白底/IMU校准期间电机为零，进入`READY PRESS C`后按中键应立即清零并启动；上、左、下、右不得启动。
-5. 架空逐一制造B1、B2、B4、B8，确认左侧探头使左轮慢、右轮快，右侧完全对称。350 mm/s下B2/B4稳态纠偏约`±16.64 mm/s`，B1/B8仍立即使用35%/120 mm/s增强并产生约230/470 mm/s目标或其镜像。再遍历多探头位型确认物理质心，B6/B9/B15稳态必须回正。`B2→B4`首周期纠偏为0、第二周期转右；经过B6居中的反向不延迟。注入反向航向偏差时，最终轮速方向仍服从非零红外误差。任一轮目标不超过500 mm/s；中键急停、约160 ms堵转和PWM 20000限制必须有效。
-6. 分别从B1、B2、B6、B4、B8进入B0：B1/B8之后继续保持35%/120 mm/s增强，其他已确认位型保持普通参数，超过300 ms不得显示故障或停车。验证`B2→B4→B0`由B0确认并保持右转；`B2→B4→B2`必须取消单周期反向。上电后尚无有效样本的初始B0按误差0且不增强处理：纯红外直行，正式竞速保留路线辅助。B0计时达到显示上限后只能饱和，不得改变控制输出。
+3. 烧录stage 0竞速固件后先保持12 V断开，上电时不得按住上键。进入`RACE FUSION`后按中键，允许短暂进入RUN；因无编码器反馈，约160 ms后应锁停并显示`TRACK STALL`，不得被`TRACK HW FAULT/STATUS 05`覆盖。若显示`LF ONLY READY`必须断电重启，不得继续正式验收。RUN期间第四行每秒交替显示`Rr Ww Bb`和`LFb Ln DnHn`。架空后分别在白底和黑线上运行电机；显示`LF GPIO FAULT`时必须立即停止并检查输入配置、3.3 V供电、共地和接线。
+4. 重新上电并架空车轮、接通12 V。确认白底/IMU校准期间电机为零，进入`RACE FUSION`后按中键应立即清零并启动；上、左、下、右不得启动。
+5. 架空逐一制造B1、B2、B4、B8，确认左侧探头使左轮慢、右轮快，右侧完全对称。普通位型总轮差不超过90 mm/s，B1/B8立即允许120 mm/s且不随持续时间降额。再遍历多探头位型确认物理质心，B6/B9/B15稳态必须回正。`B2→B4`首周期纠偏为0、第二周期转右；经过B6居中的反向不延迟。注入与LF04同向的路线/航向辅助时允许叠加到位型上限；注入反向辅助时最终轮差必须保持LF04方向，不能被抵消或反转。重点回放本次失控条件：B8原始纠偏`-120 mm/s`、路线前馈约`+77 mm/s`、航向反馈约`+37 mm/s`时，最终轮差必须为`-120 mm/s`，不得再出现`+65～+84 mm/s`。任一轮目标不超过500 mm/s；中键急停、约160 ms堵转和PWM 20000限制必须有效。
+6. 分别从B1、B2、B6、B4、B8进入B0：正式竞速与纯LF04都必须无限保持最后确认误差和增强状态，`line_weight_pct`在正式模式固定为100。`B2→B4→B0`由B0确认并保持右转；`B2→B4→B2`必须取消单周期反向。上电后尚无有效样本的初始B0按误差0且不增强处理，此时正式竞速允许路线辅助接管。
 7. 地面先按60、120、200 mm/s验证，再使用stage 0完成直线/弯道360 mm/s整圈。stage 0通过后依次把`CHASSIS_TRACK_SPEED_STAGE`设为1和2，仅将直线放行到380、400 mm/s，弯道保持360 mm/s；每级记录轨迹偏差、`BAD`、温升和急停。
-8. 依次完成四分之一圈、半圈和完整一圈。AB期望航向为0°，BC从0°升至180°，CD保持180°，DA从180°升至360°；BC、DA必须为从车顶观察的顺时针半圆。
-9. 在终点前检查第四行距离门`D`和航向门`H`：剩余距离速度上限必须让任务请求在中心里程6126.6 mm前达到100 mm/s；LF04质心和B0保持只改变轮差，不得提高任务中心速度。累计融合航向达到350°后双门才同时为1并制动，只有一项满足时保持不高于100 mm/s继续。
-10. 低速模拟航向不足：到`route+50 mm`仍低于350°时必须显示`FAULT LAP CHECK`并停车，不得无限前进。
+8. 依次完成四分之一圈、半圈和完整一圈。AB期望航向为0°，BC从0°升至180°，CD保持180°，DA从180°升至360°；BC、DA必须为从车顶观察的顺时针半圆。第二弯从约4571 mm开始；若B2在约5456 mm、294°附近进入B0并保持约`+16 mm/s`红外纠偏，融合角速度仍须持续为正且通常不低于约25°/s，不得像纯LF04数据一样降到约6°/s。
+9. 在终点前检查第四行距离门`D`和航向门`H`：`approach_distance_mm=190`的速度上限必须让任务请求在中心里程`6141.6-36 mm`前达到100 mm/s；LF04只改变轮差，不得提高任务中心速度。融合航向连续3个20 ms周期进入`360°±5°`后航向门才成立，两门同时满足才制动；376°必须拒绝制动，只有一项满足时保持不高于100 mm/s继续收敛。
+10. 分别模拟距离不足和航向窗口未满足；任一单门不得停车。到`route+50 mm`仍未同时满足时必须显示`FAULT LAP CHECK`并停车，不得无限前进。
 11. 完整一圈从有效中键按压边沿开始计时，两轮实测速度连续3个20 ms周期低于20 mm/s时结束。外部秒表、OLED和CSV的`lap_total_ms`必须一致，总时间≤20.00 s。
 12. 以A点外部基准测量车辆约定停车基准到A线的有符号距离，绝对值必须≤20 mm。OLED`EST ERR`仅作编码器估计，不替代外部测量；按实测低速制动距离微调`finish_stop_lead_mm`。
-13. 完全停车后先断12 V并保持5 V，SSCOM关闭“发→/收←”方向标记、时间标签、定时发送和自动换行，只发一次ASCII `D`或十六进制`44`并等待纯21列CSV；确认时间戳严格递增、累计融合航向约360°且包含PWM/纠偏归零样本后，才发送`C`清空RAM。运行和制动期间`D/C`不得导出或清空，每秒最多返回一次`BUSY`。
+13. 完全停车后先断12 V并保持5 V，SSCOM关闭“发→/收←”方向标记、时间标签、定时发送和自动换行，只发一次ASCII `D`或十六进制`44`并等待纯27列CSV；确认时间戳严格递增、累计融合航向约360°，并含六个融合诊断字段及PWM/纠偏归零样本后，才发送`C`清空RAM。运行和制动期间`D/C`不得导出或清空，每秒最多返回一次`BUSY`。
 
 | 速度 mm/s | 圈段 | 时间 s | A点偏差 mm | LF04丢线 | BAD增量 L/R | 最高PWM L/R | 温升/振荡 | 结论 |
 | ---: | --- | ---: | ---: | --- | --- | --- | --- | --- |
@@ -742,10 +742,10 @@ time_ms,left_ticks,right_ticks,x_mm,y_mm,encoder_heading_deg,fused_heading_deg,i
 - [ ] 路线总长参数为6141.6 mm，AB/CD各1500 mm，BC/DA半径500 mm。
 - [ ] 360 mm/s完整圈外部计时≤20.00 s。
 - [ ] A点外部停车偏差绝对值≤20 mm。
-- [ ] LF04的B1-B15均按四路物理质心工作；普通22%/90 mm/s、B1/B8增强35%/120 mm/s、两周期反向确认、红外方向优先及B0无限保持符合要求，纯LF04请求行程弯道记忆保持关闭。
-- [ ] 6126.6 mm与350°双门满足后制动；`route+50 mm`不满足时锁停。
+- [ ] LF04的B1-B15均按四路物理质心工作；普通90 mm/s、B1/B8立即120 mm/s、两周期反向确认、反向LF04优先及B0无限保持符合要求，纯LF04和正式竞速的弯道记忆均关闭。
+- [ ] 第一半圆不再出现B8要求负纠偏而最终轮差仍为正的反向夺权；终点仅在`route-36 mm`距离门和360°±5°三周期航向门同时满足时制动，`route+50 mm`不满足时锁停。
 - [ ] 中键急停、堵转与40%绝对限幅均通过。
-- [ ] CSV包含21列、累计约360°航向以及PWM/纠偏归零样本，时间戳严格递增，OLED/CSV/外部计时一致。
+- [ ] CSV包含27列、累计约360°航向、六个融合字段以及PWM/纠偏归零样本，时间戳严格递增，OLED/CSV/外部计时一致。
 
 ---
 
@@ -770,10 +770,11 @@ time_ms,left_ticks,right_ticks,x_mm,y_mm,encoder_heading_deg,fused_heading_deg,i
 | `TEST COMPLETE` | 默认自检完成 | 保持停车，可导出 UART |
 | `WHITE + IMU CAL` | 竞速白底稳定门与IMU校准 | 车辆离开黑线并保持静止，等待`RF`连续10次 |
 | `LF WHITE WAIT` | IMU已完成但LF04尚未稳定为`RF` | 保持停车和白底；查看当前R值与稳定计数 |
-| `READY PRESS C` | 等待人工定义竞速零位 | 对准顺时针AB方向；程序不识别A点或启动位型，按中键清零并启动 |
+| `RACE FUSION` | 正式编码器/IMU融合竞速等待页 | 确认未按上键、对准顺时针AB方向；按中键清零并启动 |
+| `LF ONLY READY` | 纯LF04诊断等待页 | 仅用于红外诊断；要跑正式竞速须断电后不按上键重启 |
 | `RUN AB/BC/CD/DA` | 编码器–融合航向胶囊轨迹运行 | 监控期望/融合航向、轨迹、温升和BAD |
 | `FINAL APPROACH` | A点前低速接近 | 不进入赛道，准备外部停车测量 |
-| `ENC+IMU CHECK` | 等待6126.6 mm与350°双门 | 查看第四行`D/H`，LF仍只作有限幅辅助 |
+| `ENC+IMU CHECK` | 等待`route-36 mm`与360°±5°三周期双门 | 查看第四行`D/H`，LF按正式置信度参与有限幅融合 |
 | `LAP COMPLETE` | 两轮已连续3周期低于20 mm/s | 记录TIME与EST ERR并外部复核 |
 | `FAULT LAP CHECK` | 到`route+50 mm`仍未满足距离/航向双门 | 已停车，检查轮距、轮径、融合航向和打滑 |
 | `LF GPIO FAULT` | LF04输入重申失败 | 已锁停；断12 V，记录R/W/B并检查软件映射后再查硬件 |

@@ -56,10 +56,21 @@ typedef struct {
 
 typedef struct {
     float linear_mm_s;
+    float route_feedforward_rad_s;
+    float heading_feedback_rad_s;
+    float heading_error_deg;
+} chassis_track_line_fusion_request_t;
+
+typedef struct {
+    float linear_mm_s;
     float angular_rad_s;
     float left_mm_s;
     float right_mm_s;
     float correction_mm_s;
+    float route_feedforward_bias_mm_s;
+    float heading_feedback_bias_mm_s;
+    float line_weight;
+    float final_steering_bias_mm_s;
     uint16_t lost_ms;
     chassis_track_line_state_t line_state;
     bool line_valid;
@@ -79,6 +90,10 @@ void chassis_track_line_control_reset(
 ml_status_t chassis_track_line_control_update(
     chassis_track_line_control_t *control, const line_sample_t *sample,
     float requested_linear_mm_s, float requested_angular_rad_s,
+    chassis_track_line_control_output_t *output);
+ml_status_t chassis_track_line_control_update_fused(
+    chassis_track_line_control_t *control, const line_sample_t *sample,
+    const chassis_track_line_fusion_request_t *request,
     chassis_track_line_control_output_t *output);
 
 #endif

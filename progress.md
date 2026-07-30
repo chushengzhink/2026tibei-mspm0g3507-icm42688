@@ -297,3 +297,21 @@
   - Compiled the controller, application, telemetry, and telemetry-UART sources with ARM Compiler 5 under race defines/includes: `4/4 passed`.
   - Parsed both Keil project XML files, passed `git diff --check`, and re-audited the 500 mm/s wheel, PWM 20000, eight-cycle stall, and 1200 mm/five-cycle guard constants.
   - Confirmed the existing interactive `project_track.uvprojx` μVision process is still open; no competing UV4 build was launched.
+
+### Phase 18: Formal IMU + LF04 + Encoder Arbitration
+- **Status:** in_progress
+- Actions taken:
+  - Re-read project constraints and the implementation/file-planning guidance, ran session catch-up and `git status --short`, and preserved all existing Phase 17 working-tree changes.
+  - Read and visually checked the four-page H-problem PDF; confirmed the 20 s, 20 mm, R500, 1500 mm, infrared-only line-sensor, and safety-relevant requirements.
+  - Parsed the duplicated 398-row UART paste into three monotonic segments and selected the 187-row first session as authoritative.
+  - Reconstructed route progress/expected heading and confirmed that formal infrared priority prevents already-computed encoder+IMU damping from affecting the final steering command.
+  - Locked the implementation boundary: formal race receives signed confidence/budget arbitration; boot-Up LF-only behavior, speed stages, lower yaw-rate loop, motor limits, stall protection, and emergency stop remain unchanged.
+  - Added split mission outputs, formal-only steering-budget arbitration, 120 ms B0 decay, sustained-B1 taper, heading-conflict attenuation, and 52-byte telemetry plumbing.
+  - Ran the first integrated host suite: `14/18 passed`; all core sources compile and all unchanged LF-only tests pass. Expected failures are confined to the old 44-byte/21-column telemetry strings and old 350-degree finish-gate assertions.
+  - Completed the original confidence-budget implementation, 27-column telemetry, finish-window tests, and host suite at `18/18`, then observed a race Rebuild SRAM overflow of `0xC10` bytes.
+  - Replaced the 600-by-52-byte RAM array with a 44-byte compact internal record while keeping the 52-byte public structure, 27-column export, and 600-record capacity; host tests and ARMCC passed.
+  - Parsed the subsequent failed hardware CSV: the car departed before finishing the first semicircle because live B8 `-120 mm/s` was reversed into `+65..+84 mm/s` by `+77/+37` route/heading bias.
+  - Removed formal B0 decay, sustained-B1 taper, and heading-conflict attenuation; restored `22d672e` LF04-direction priority while retaining split diagnostics and the new finish gate.
+  - Added the exact failed first-curve regression plus B0 hold, centered route takeover, same-direction cap, and opposing-heading LF04-authority coverage.
+  - Re-ran the complete host suite: `18/18 passed`; compiled line control, mission, telemetry, and track application with ARM Compiler 5: `4/4 passed`.
+  - Synchronized README, ROBOT_SETUP, HARDWARE_ACCEPTANCE, and TRACK_FUSION_HANDOFF with the corrected LF04-priority behavior and staged first-semicircle acceptance.

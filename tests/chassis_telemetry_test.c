@@ -85,25 +85,31 @@ int main(void)
         "fused_yaw_rate_dps,fusion_active,elapsed_ms,lap_total_ms,"
         "target_center_mm_s,actual_center_mm_s,left_pwm_count,"
         "right_pwm_count,line_bits,line_correction_mm_s,line_usable,"
-        "line_recovering,"
-        "line_pattern_invalid\r\n";
+        "line_recovering,line_pattern_invalid,mission_progress_mm,"
+        "expected_heading_deg,route_feedforward_bias_mm_s,"
+        "heading_feedback_bias_mm_s,line_weight_pct,"
+        "final_steering_bias_mm_s\r\n";
     static const char two_record_csv[] =
         "time_ms,left_ticks,right_ticks,x_mm,y_mm,"
         "encoder_heading_deg,fused_heading_deg,imu_yaw_deg,"
         "fused_yaw_rate_dps,fusion_active,elapsed_ms,lap_total_ms,"
         "target_center_mm_s,actual_center_mm_s,left_pwm_count,"
         "right_pwm_count,line_bits,line_correction_mm_s,line_usable,"
-        "line_recovering,"
-        "line_pattern_invalid\r\n"
+        "line_recovering,line_pattern_invalid,mission_progress_mm,"
+        "expected_heading_deg,route_feedforward_bias_mm_s,"
+        "heading_feedback_bias_mm_s,line_weight_pct,"
+        "final_steering_bias_mm_s\r\n"
         "100,1,2,3.000,4.000,185.00,185.50,6.00,7.25,1,50,200,"
-        "100.0,90.0,12000,11000,6,0,1,0,0\r\n"
+        "100.0,90.0,12000,11000,6,0,1,0,0,1234,281.41,77,-37,"
+        "25,52\r\n"
         "200,-3,4,-1.250,2.500,360.00,360.50,45.00,-8.50,0,"
-        "150,200,0.0,5.0,0,0,15,-120,0,1,1\r\n";
+        "150,200,0.0,5.0,0,0,15,-120,0,1,1,6142,360.00,0,-37,"
+        "0,-37\r\n";
     chassis_telemetry_record_t record;
     uint16_t index;
 
-    check(sizeof(chassis_telemetry_record_t) == 44U,
-        "binary record is exactly 44 bytes");
+    check(sizeof(chassis_telemetry_record_t) == 52U,
+        "binary record is exactly 52 bytes");
     chassis_telemetry_init();
     for (index = 0U; index < CHASSIS_TELEMETRY_CAPACITY; ++index) {
         check(chassis_telemetry_record((uint32_t) index * 100U,
@@ -192,6 +198,8 @@ int main(void)
     chassis_telemetry_session_start(50U);
     chassis_telemetry_set_line_state(0x06U, true, false, false);
     chassis_telemetry_set_line_correction(42.9f);
+    chassis_telemetry_set_track_fusion(
+        1234.4f, 281.41f, 77.1f, -37.4f, 0.25f, 52.5f);
     check(chassis_telemetry_record(100U, 1, 2, 3.0f, 4.0f,
         5.0f, 5.5f, 6.0f, 7.25f, 100.0f, 90.0f,
         12000U, 11000U, true) == ML_STATUS_OK,
@@ -205,8 +213,14 @@ int main(void)
         record.encoder_heading_cdeg == 18500 &&
         record.fused_heading_cdeg == 18550 &&
         record.line_correction_mm_s == 0 &&
+        record.mission_progress_mm == 1234U &&
+        record.expected_heading_cdeg == 28141U &&
+        record.route_feedforward_bias_mm_s == 77 &&
+        record.heading_feedback_bias_mm_s == -37 &&
+        record.line_weight_pct == 25U &&
+        record.final_steering_bias_mm_s == 52 &&
         (record.line_state_flags & CHASSIS_TELEMETRY_LINE_USABLE) != 0U,
-        "same-timestamp stop snapshot replaces instead of duplicating");
+        "same-timestamp snapshot preserves formal fusion diagnostics");
     reset_uart_capture();
     check(chassis_uart0_send_busy() == ML_STATUS_OK &&
         strcmp(g_uart_capture, "BUSY\r\n") == 0 &&
@@ -234,6 +248,8 @@ int main(void)
         "diagnostic banner propagates TX failure without continuing");
     chassis_telemetry_set_line_state(0x0FU, false, true, true);
     chassis_telemetry_set_line_correction(-120.0f);
+    chassis_telemetry_set_track_fusion(
+        6141.6f, 360.0f, 0.0f, -37.5f, 0.0f, -37.5f);
     check(chassis_telemetry_record(200U, -3, 4, -1.25f, 2.5f,
         360.0f, 360.5f, 45.0f, -8.5f, 0.0f, 5.0f,
         0U, 0U, false) == ML_STATUS_OK,

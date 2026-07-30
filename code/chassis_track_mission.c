@@ -32,16 +32,18 @@ const chassis_track_config_t g_chassis_track_default_config = {
     CHASSIS_TRACK_CURVE_CRUISE_MM_S,
     100.0f,
     400.0f,
-    162.0f,
+    190.0f,
     50.0f,
-    15.0f,
-    350.0f,
+    36.0f,
+    360.0f,
+    5.0f,
     4.0f,
     0.35f,
     20.0f,
     20.0f,
     20.0f,
     20U,
+    3U,
     3U
 };
 
@@ -131,7 +133,8 @@ static bool track_config_valid(const chassis_track_config_t *config)
         track_finite(config->approach_distance_mm) &&
         track_finite(config->finish_max_overrun_mm) &&
         track_finite(config->finish_stop_lead_mm) &&
-        track_finite(config->finish_heading_min_deg) &&
+        track_finite(config->finish_heading_target_deg) &&
+        track_finite(config->finish_heading_tolerance_deg) &&
         track_finite(config->heading_control_kp) &&
         track_finite(config->maximum_heading_correction_rad_s) &&
         (config->straight_length_mm > 0.0f) &&
@@ -149,11 +152,15 @@ static bool track_config_valid(const chassis_track_config_t *config)
         (config->finish_max_overrun_mm > 0.0f) &&
         (config->finish_stop_lead_mm >= 0.0f) &&
         (config->finish_stop_lead_mm < config->approach_distance_mm) &&
-        (config->finish_heading_min_deg > 0.0f) &&
-        (config->finish_heading_min_deg <= 360.0f) &&
+        (config->finish_heading_target_deg > 0.0f) &&
+        (config->finish_heading_target_deg <= 360.0f) &&
+        (config->finish_heading_tolerance_deg > 0.0f) &&
+        (config->finish_heading_tolerance_deg <
+         config->finish_heading_target_deg) &&
         (config->heading_control_kp >= 0.0f) &&
         (config->maximum_heading_correction_rad_s > 0.0f) &&
         (config->control_period_ms > 0U) &&
+        (config->finish_heading_confirm_cycles > 0U) &&
         (config->stopped_cycles_required > 0U);
 }
 
@@ -173,8 +180,12 @@ ml_status_t chassis_track_mission_init(chassis_track_mission_t *mission,
     mission->elapsed_s = 0.0f;
     mission->heading_progress_deg = 0.0f;
     mission->expected_heading_deg = 0.0f;
+    mission->route_feedforward_rad_s = 0.0f;
+    mission->heading_feedback_rad_s = 0.0f;
+    mission->heading_error_deg = 0.0f;
     mission->start_time_ms = 0U;
     mission->stop_time_ms = 0U;
+    mission->heading_window_cycles = 0U;
     mission->stopped_cycles = 0U;
     mission->distance_gate_met = false;
     mission->heading_gate_met = false;
@@ -203,6 +214,10 @@ ml_status_t chassis_track_mission_start(chassis_track_mission_t *mission,
     mission->elapsed_s = 0.0f;
     mission->heading_progress_deg = 0.0f;
     mission->expected_heading_deg = 0.0f;
+    mission->route_feedforward_rad_s = 0.0f;
+    mission->heading_feedback_rad_s = 0.0f;
+    mission->heading_error_deg = 0.0f;
+    mission->heading_window_cycles = 0U;
     mission->stopped_cycles = 0U;
     mission->distance_gate_met = false;
     mission->heading_gate_met = false;
@@ -284,6 +299,11 @@ static void track_fill_output(const chassis_track_mission_t *mission,
     output->stop_error_mm = mission->stop_error_mm;
     output->heading_progress_deg = mission->heading_progress_deg;
     output->expected_heading_deg = mission->expected_heading_deg;
+    output->route_feedforward_rad_s =
+        mission->route_feedforward_rad_s;
+    output->heading_feedback_rad_s =
+        mission->heading_feedback_rad_s;
+    output->heading_error_deg = mission->heading_error_deg;
     output->state = mission->state;
     output->finished = mission->state == CHASSIS_TRACK_COMPLETE;
     output->command_stop = !track_state_running(mission->state);
@@ -336,6 +356,14 @@ ml_status_t chassis_track_mission_update(chassis_track_mission_t *mission,
         &mission->config, mission->progress_mm);
     mission->expected_heading_deg =
         expected_heading_rad * 180.0f / CHASSIS_TRACK_PI;
+    actual_heading_rad = mission->heading_progress_deg *
+        CHASSIS_TRACK_PI / 180.0f;
+    heading_error_rad = track_wrap(
+        expected_heading_rad - actual_heading_rad);
+    mission->heading_error_deg = heading_error_rad *
+        180.0f / CHASSIS_TRACK_PI;
+    mission->route_feedforward_rad_s = 0.0f;
+    mission->heading_feedback_rad_s = 0.0f;
 
     if (emergency_stop && track_state_running(mission->state)) {
         mission->state = CHASSIS_TRACK_FAULT_EMERGENCY;
@@ -343,9 +371,18 @@ ml_status_t chassis_track_mission_update(chassis_track_mission_t *mission,
     if (track_state_running(mission->state)) {
         mission->distance_gate_met =
             mission->progress_mm >= brake_distance;
+        if (track_abs(mission->heading_progress_deg -
+            mission->config.finish_heading_target_deg) <=
+            mission->config.finish_heading_tolerance_deg) {
+            if (mission->heading_window_cycles < UINT8_MAX) {
+                ++mission->heading_window_cycles;
+            }
+        } else {
+            mission->heading_window_cycles = 0U;
+        }
         mission->heading_gate_met =
-            mission->heading_progress_deg >=
-            mission->config.finish_heading_min_deg;
+            mission->heading_window_cycles >=
+            mission->config.finish_heading_confirm_cycles;
         if (mission->distance_gate_met && mission->heading_gate_met) {
             mission->state = CHASSIS_TRACK_BRAKING;
             mission->commanded_speed_mm_s = 0.0f;
@@ -380,13 +417,11 @@ ml_status_t chassis_track_mission_update(chassis_track_mission_t *mission,
             omega_ff = mission->commanded_speed_mm_s /
                 mission->config.curve_radius_mm;
         }
-        actual_heading_rad = mission->heading_progress_deg *
-            CHASSIS_TRACK_PI / 180.0f;
-        heading_error_rad = track_wrap(
-            expected_heading_rad - actual_heading_rad);
         omega_heading = track_clamp(
             mission->config.heading_control_kp * heading_error_rad,
             mission->config.maximum_heading_correction_rad_s);
+        mission->route_feedforward_rad_s = omega_ff;
+        mission->heading_feedback_rad_s = omega_heading;
         output->linear_mm_s = mission->commanded_speed_mm_s;
         output->angular_rad_s = omega_ff + omega_heading;
     } else if (mission->state == CHASSIS_TRACK_BRAKING) {
@@ -416,7 +451,7 @@ ml_status_t chassis_track_mission_update(chassis_track_mission_t *mission,
 const char *chassis_track_state_text(chassis_track_state_t state)
 {
     switch (state) {
-        case CHASSIS_TRACK_READY: return "READY PRESS C   ";
+        case CHASSIS_TRACK_READY: return "RACE FUSION     ";
         case CHASSIS_TRACK_AB: return "RUN AB STRAIGHT ";
         case CHASSIS_TRACK_BC: return "RUN BC CW CURVE ";
         case CHASSIS_TRACK_CD: return "RUN CD STRAIGHT ";

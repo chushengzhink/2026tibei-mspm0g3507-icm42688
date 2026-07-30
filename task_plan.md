@@ -4,7 +4,7 @@
 在保留40%硬限幅、默认自检和现有安全保护的前提下，实现PA27四路LF04辅助纠偏、竞速速度/用时/PWM遥测及UART0 CSV导出，并完成主机与ARM构建验证。
 
 ## Current Phase
-Phase 17
+Phase 18
 
 ## Phases
 
@@ -144,6 +144,14 @@ Phase 17
 - [ ] Hand off both full Rebuilds to the existing interactive Keil window
 - **Status:** in_progress
 
+### Phase 18: Formal IMU + LF04 + Encoder Arbitration
+- [x] Add CSV-derived replay regressions for signed route/heading/line arbitration
+- [x] Split mission feedforward and heading feedback outputs and add a 360 +/- 5 degree finish window
+- [x] Restore LF04-direction authority after the feedforward-first hardware failure
+- [x] Expand telemetry to a 52-byte public record and 27 CSV columns while retaining 600 compact RAM records
+- [ ] Complete both interactive Keil Rebuilds and staged hardware verification
+- **Status:** in_progress
+
 ## Decisions Made
 | Decision | Rationale |
 |----------|-----------|
@@ -166,6 +174,10 @@ Phase 17
 | Use five LF-only speeds through 350 mm/s | User selected 60/120/200/280/350 for staged hardware validation |
 | Use `distance_mm=0` as unlimited | Removes the default 1000 mm stop without breaking the existing positive-distance state-machine interface |
 | Keep Center as a locked emergency stop | User explicitly chose manual locked stopping at the end of the lap rather than automatic or repeatable graceful stopping |
+| Keep split route/heading diagnostics but restore LF04-direction authority | The feedforward-first trial reversed a live B8 `-120 mm/s` recovery request into `+65..+84 mm/s` and left the track before the first semicircle ended |
+| Keep formal B0 at full remembered LF04 authority | The 120 ms decay removed the only lateral reacquisition signal; formal `line_weight_pct` is now fixed at 100 |
+| Use a 360 +/- 5 degree, three-cycle finish window | Rejects the observed 376 degree finish while preserving the route+50 mm safety stop |
+| Start stop-lead calibration at 36 mm with a 190 mm approach | The authoritative lap coasted 36.2 mm after the stop command; the longer approach preserves the 400 mm/s2 deceleration distance |
 | Use physical LF04 centers `-40.25/-7.25/+7.25/+40.25 mm` | The module drawing fixes the 33/14.5/33 mm center spacing and the user requested true four-sensor control |
 | Apply four-sensor control to both modes | User selected one shared controller for LF-only diagnostics and formal racing |
 | Hold the last normalized error at full task speed through B0 | User explicitly selected no 120 mm/s reduction and no 300 ms fault; a startup B0 defaults to centered error |
@@ -197,3 +209,7 @@ Phase 17
 | Phase 15 combined final check treated `rg` zero matches as failure | 1 | Separate the host suite and make the expected no-match audit handle exit code 1 explicitly |
 | Phase 16 safety audit tried to splat a hashtable property as `@c.Paths` | 1 | Assign the property to `$auditPaths` first, then splat that variable; the corrected audit passed |
 | Phase 17 combined task/progress bookkeeping patch matched the repeated phase heading ambiguously | 1 | Split the update into exact file-specific patches; source and tests were already successful |
+| Phase 18 combined planning-file patch missed a Unicode progress line | 1 | Split the bookkeeping into independent stable-anchor patches; no source file was touched |
+| Phase 18 first integrated host run reported 14/18 | 1 | Core sources compiled; update the intentionally changed telemetry and finish-gate contracts, then add formal-fusion replay coverage |
+| First 52-byte-by-600 telemetry allocation overflowed SRAM by `0xC10` | 1 | Keep the 52-byte public record and 27-column CSV but store 600 internal 44-byte compact records; tick/heading remain exact and x/y use 0.25 mm resolution |
+| Feedforward-first formal arbitration caused severe first-semicircle departure | 1 | Restore `22d672e` LF04-priority steering, retain split telemetry/finish changes, and add the exact B8 `-120` versus `+77/+37` regression |

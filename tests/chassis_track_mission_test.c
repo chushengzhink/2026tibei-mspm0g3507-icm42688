@@ -118,15 +118,43 @@ static void test_heading_feedback(void)
         0.0f, 0.0f, 80.0f, 120U, false, &output);
     nominal_omega = output.linear_mm_s / 500.0f;
     check(near_value(output.angular_rad_s - nominal_omega,
-              0.35f, 0.001f),
+              0.35f, 0.001f) &&
+        near_value(output.route_feedforward_rad_s,
+              nominal_omega, 0.001f) &&
+        near_value(output.heading_feedback_rad_s, 0.35f, 0.001f) &&
+        near_value(output.heading_error_deg, 10.0f, 0.02f),
         "lagging fused heading gets limited positive correction");
     (void) chassis_track_mission_update(&mission,
         1500.0f + quarter_curve,
         0.0f, 0.0f, 100.0f, 140U, false, &output);
     nominal_omega = output.linear_mm_s / 500.0f;
     check(near_value(output.angular_rad_s - nominal_omega,
-              -0.35f, 0.001f),
+              -0.35f, 0.001f) &&
+        near_value(output.route_feedforward_rad_s,
+              nominal_omega, 0.001f) &&
+        near_value(output.heading_feedback_rad_s, -0.35f, 0.001f) &&
+        near_value(output.heading_error_deg, -10.0f, 0.02f),
         "leading fused heading gets limited negative correction");
+}
+
+static void test_second_curve_fusion_replay(void)
+{
+    chassis_track_mission_t mission = {0};
+    chassis_track_output_t output;
+
+    start_mission(&mission, 0.0f, 0.0f);
+    mission.commanded_speed_mm_s = 360.0f;
+    (void) chassis_track_mission_update(&mission,
+        5455.8f, 0.0f, 0.0f, 294.32f, 120U, false, &output);
+
+    check(output.state == CHASSIS_TRACK_DA &&
+        near_value(output.expected_heading_deg, 281.41f, 0.02f),
+        "second-curve replay uses encoder progress for expected heading");
+    check(near_value(output.linear_mm_s, 360.0f, 0.001f) &&
+        near_value(output.route_feedforward_rad_s, 0.72f, 0.001f) &&
+        near_value(output.heading_feedback_rad_s, -0.35f, 0.001f) &&
+        near_value(output.angular_rad_s, 0.37f, 0.001f),
+        "second-curve replay exposes feedforward and negative heading damping");
 }
 
 static void test_dual_finish_gate(void)
@@ -135,47 +163,88 @@ static void test_dual_finish_gate(void)
     chassis_track_output_t output;
     float route = chassis_track_route_length(
         &g_chassis_track_default_config);
-    float brake_distance = route - 15.0f;
+    float brake_distance = route -
+        g_chassis_track_default_config.finish_stop_lead_mm;
 
     start_mission(&mission, 0.0f, 0.0f);
     mission.commanded_speed_mm_s = 100.0f;
     (void) chassis_track_mission_update(&mission,
         brake_distance - 1.0f, 100.0f, 100.0f,
-        350.0f, 120U, false, &output);
+        360.0f, 120U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        brake_distance - 1.0f, 100.0f, 100.0f,
+        360.0f, 140U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        brake_distance - 1.0f, 100.0f, 100.0f,
+        360.0f, 160U, false, &output);
     check(!output.command_stop && !output.distance_gate_met &&
         output.heading_gate_met,
         "heading gate alone cannot stop the car");
     (void) chassis_track_mission_update(&mission,
         brake_distance, 100.0f, 100.0f,
-        349.0f, 140U, false, &output);
+        376.0f, 180U, false, &output);
     check(!output.command_stop && output.distance_gate_met &&
         !output.heading_gate_met &&
         near_value(output.linear_mm_s, 100.0f, 0.001f),
-        "distance gate alone continues at approach speed");
+        "distance gate rejects the recorded 376 degree over-turn");
     (void) chassis_track_mission_update(&mission,
         brake_distance, 100.0f, 100.0f,
-        350.0f, 160U, false, &output);
+        360.0f, 200U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        brake_distance, 100.0f, 100.0f,
+        360.0f, 220U, false, &output);
+    check(!output.command_stop && !output.heading_gate_met,
+        "finish heading requires three consecutive in-window cycles");
+    (void) chassis_track_mission_update(&mission,
+        brake_distance, 100.0f, 100.0f,
+        360.0f, 240U, false, &output);
     check(output.state == CHASSIS_TRACK_BRAKING &&
         output.command_stop && output.distance_gate_met &&
         output.heading_gate_met,
-        "distance and 350 degree gates together command braking");
+        "distance and confirmed 360 degree window command braking");
 
     (void) chassis_track_mission_update(&mission,
-        route, 0.0f, 0.0f, 351.0f, 180U, false, &output);
+        route, 0.0f, 0.0f, 360.0f, 260U, false, &output);
     (void) chassis_track_mission_update(&mission,
-        route, 0.0f, 30.0f, 351.0f, 200U, false, &output);
+        route, 0.0f, 30.0f, 360.0f, 280U, false, &output);
     check(!output.finished && mission.stopped_cycles == 0U,
         "either wheel above 20 mm/s resets the stopped-cycle gate");
     (void) chassis_track_mission_update(&mission,
-        route, 0.0f, 0.0f, 351.0f, 220U, false, &output);
+        route, 0.0f, 0.0f, 360.0f, 300U, false, &output);
     (void) chassis_track_mission_update(&mission,
-        route, 0.0f, 0.0f, 351.0f, 240U, false, &output);
+        route, 0.0f, 0.0f, 360.0f, 320U, false, &output);
     (void) chassis_track_mission_update(&mission,
-        route, 0.0f, 0.0f, 351.0f, 260U, false, &output);
+        route, 0.0f, 0.0f, 360.0f, 340U, false, &output);
     check(output.finished && output.state == CHASSIS_TRACK_COMPLETE &&
-        mission.stop_time_ms == 260U &&
-        near_value(output.elapsed_s, 0.160f, 0.0001f),
+        mission.stop_time_ms == 340U &&
+        near_value(output.elapsed_s, 0.240f, 0.0001f),
         "third stopped cycle records the exact completion time");
+}
+
+static void test_finish_heading_window_bounds(void)
+{
+    chassis_track_mission_t mission = {0};
+    chassis_track_output_t output;
+    float route = chassis_track_route_length(
+        &g_chassis_track_default_config);
+    float brake_distance = route -
+        g_chassis_track_default_config.finish_stop_lead_mm;
+
+    start_mission(&mission, 0.0f, 0.0f);
+    mission.commanded_speed_mm_s = 100.0f;
+    (void) chassis_track_mission_update(&mission,
+        brake_distance, 100.0f, 100.0f, 354.9f, 120U, false, &output);
+    check(!output.heading_gate_met,
+        "heading below 355 degrees is outside the finish window");
+    (void) chassis_track_mission_update(&mission,
+        brake_distance, 100.0f, 100.0f, 355.0f, 140U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        brake_distance, 100.0f, 100.0f, 365.0f, 160U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        brake_distance, 100.0f, 100.0f, 365.0f, 180U, false, &output);
+    check(output.state == CHASSIS_TRACK_BRAKING &&
+        output.heading_gate_met,
+        "355 through 365 degrees are inclusive after three cycles");
 }
 
 static void test_distance_limited_final_approach(void)
@@ -263,7 +332,9 @@ int main(void)
     test_start_and_route_geometry();
     test_expected_heading_profile();
     test_heading_feedback();
+    test_second_curve_fusion_replay();
     test_dual_finish_gate();
+    test_finish_heading_window_bounds();
     test_distance_limited_final_approach();
     test_stage_zero_lap_time_budget();
     test_lap_mismatch_and_emergency();
