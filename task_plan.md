@@ -4,7 +4,7 @@
 在保留40%硬限幅、默认自检和现有安全保护的前提下，实现PA27四路LF04辅助纠偏、竞速速度/用时/PWM遥测及UART0 CSV导出，并完成主机与ARM构建验证。
 
 ## Current Phase
-Phase 13
+Phase 17
 
 ## Phases
 
@@ -113,6 +113,37 @@ Phase 13
 - [ ] Hand off both full Rebuilds to the existing interactive Keil window
 - **Status:** in_progress
 
+### Phase 15: Anti-Wobble PD and LF-Only CSV
+- [x] Retune the shared line controller to `Kp=1.2`, `Ki=0`, `Kd=0.20`
+- [x] Add one-cycle direct-reversal confirmation without delaying centered or same-side samples
+- [x] Preserve immediate B1/B8 boost and defined B0 confirmation/hold behavior
+- [x] Add 21-column correction telemetry while retaining 44-byte records and 600 samples
+- [x] Finalize and snapshot LF-only telemetry on locked Center stop, then allow stopped UART export
+- [x] Update focused/full regressions and the four operating documents
+- [x] Complete ARMCC/XML/whitespace portable verification
+- [ ] Hand off both full Keil Rebuilds and staged LF-only CSV hardware validation
+- **Status:** in_progress
+
+### Phase 16: LF-Only Curve Memory and Smooth B0 Correction
+- [x] Add a dedicated LF-only controller configuration without changing race behavior
+- [x] Activate symmetric curve memory from confirmed B1/B8 and clear it on B15/opposite confirmation
+- [x] Apply 600 ms full boost plus 600 ms taper to the curve-hold bias during B0
+- [x] Preserve existing PD behavior when curve memory has not been activated
+- [x] Add focused/full regressions and synchronize the four operating documents
+- [x] Complete ARMCC/XML/whitespace/safety portable verification
+- [ ] Hand off both full Rebuilds to the existing interactive Keil window
+- **Status:** in_progress
+
+### Phase 17: LF-Only Curve Exit Travel Guard
+- [x] Add a 1200 mm requested-travel exit guard and five-cycle opposite confirmation
+- [x] Keep early opposite inner patterns as PD residual without clearing curve direction
+- [x] Preserve B0 curve direction and prevent same-sample opposite reactivation
+- [x] Replay the failed sequence and cover symmetry, five speeds, B15, and race regressions
+- [x] Synchronize the four operating documents
+- [x] Complete ARMCC/XML/whitespace/safety portable verification
+- [ ] Hand off both full Rebuilds to the existing interactive Keil window
+- **Status:** in_progress
+
 ## Decisions Made
 | Decision | Rationale |
 |----------|-----------|
@@ -160,3 +191,9 @@ Phase 13
 | Phase 11 baseline host suite did not link `chassis_track_line_control_test` because `code/pid.c` was omitted | 1 | Add the dependency to that host-test case as part of this phase |
 | Combined hardware-acceptance patch did not match the exact existing LF04 wording | 1-2 | Re-read the focused section, then split every paragraph into an independent exact patch |
 | Phase 14 focused GCC output directory did not exist | 1 | Write the focused executable to the system temporary directory like the host runner |
+| Phase 15 combined bookkeeping patch used progress context in task_plan | 1 | Split the task and progress updates into exact file-specific patches; source changes were unaffected |
+| Phase 15 combined four-document patch missed one ROBOT_SETUP UART line | 1 | Apply one exact file-specific patch at a time using the current text; no documentation hunk was applied |
+| Phase 15 README/test cleanup patch used the plural test-function name | 1 | Re-read the exact function and apply a surgical patch against `test_invalid_input` |
+| Phase 15 combined final check treated `rg` zero matches as failure | 1 | Separate the host suite and make the expected no-match audit handle exit code 1 explicitly |
+| Phase 16 safety audit tried to splat a hashtable property as `@c.Paths` | 1 | Assign the property to `$auditPaths` first, then splat that variable; the corrected audit passed |
+| Phase 17 combined task/progress bookkeeping patch matched the repeated phase heading ambiguously | 1 | Split the update into exact file-specific patches; source and tests were already successful |

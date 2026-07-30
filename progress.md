@@ -244,3 +244,56 @@
   - Confirmed the interactive race μVision window remains open and compiled the four affected production sources directly with ARMCC: `4/4 passed`; no UV4 process was launched.
   - Parsed both Keil project XML files, passed affected-file trailing-whitespace and `git diff --check`, and re-audited the 500 mm/s wheel, 8-cycle stall, 20000 PWM, normal 90 mm/s, and outer 120 mm/s limits.
   - Portable Phase 14 verification is complete; only the two user-triggered full Rebuilds and hardware trial remain.
+
+### Phase 15: Anti-Wobble PD and LF-Only CSV
+- **Status:** in_progress
+- Actions taken:
+  - Re-read project constraints and implementation/file-planning skills, ran session catch-up, and confirmed a clean worktree with Phase 14 as the current baseline.
+  - Locked the infrared-only PD, immediate outer boost, one-cycle direct-reversal confirmation, stopped-only export, and 21-column/no-extra-RAM telemetry decisions.
+  - Ran the clean Phase 14 baseline host suite: `18/18 passed`.
+  - Confirmed the telemetry record is exactly 44 bytes with a one-byte `reserved` field, and identified every 20-column/277-byte documentation and test expectation that must move to the 21-column header.
+  - Implemented first-valid derivative initialization, `reverse_confirm_cycles=2`, centered/same-side immediate acceptance, and B0 confirmation of a pending direct reversal.
+  - Updated focused controller regressions for steady inner correction, derivative release/centering pulses, glitch cancellation, second-sample confirmation, and B0 confirmation; the strict GCC test passes.
+  - Replaced the telemetry record's reserved byte with signed `line_correction_mm_s`, added its setter/export column, and retained the 44-byte/600-record layout.
+  - Integrated correction updates into both tracking modes and finalized LF-only sessions with a zero-correction snapshot on locked Center stop.
+  - Updated and ran the focused telemetry/UART regression with strict warnings; signed saturation, 21-column export, stopped-only `D/C`, and same-timestamp replacement pass.
+  - Calculated the exact 21-column empty CSV header length as 298 bytes including CRLF.
+  - The first combined four-document patch failed on one ROBOT_SETUP UART wording mismatch and applied no hunks; documentation will be updated file by file.
+  - Completed the four operating-document update; a final audit found and corrected one stale README architecture-tree `P控制` label.
+  - Added a configuration boundary regression proving `reverse_confirm_cycles=0` is rejected at initialization.
+  - Re-ran the complete host suite after the cleanup and boundary test: `18/18 passed`.
+  - Confirmed the user-owned `project_track.uvprojx` μVision window is open and did not launch a competing UV4 build.
+  - Compiled `chassis_track_line_control.c`, `chassis_telemetry.c`, `chassis_telemetry_uart.c`, and `chassis_track_app.c` directly with ARMCC under the race project's actual defines/includes: `4/4 passed` with no diagnostics.
+  - Parsed both Keil project XML files, passed `git diff --check`, and re-audited the 500 mm/s wheel, 90/120 mm/s correction, 22%/35% ratio, and 8-cycle stall constants.
+  - Added exact `+120 mm/s` correction storage coverage; the final complete host suite remains `18/18 passed`.
+  - Cleared line-correction telemetry in the shared braking entry so formal-race and positive-distance stop snapshots report zero once steering is no longer applied; recompiled the application with ARMCC successfully.
+
+### Phase 16: LF-Only Curve Memory and Smooth B0 Correction
+- **Status:** in_progress
+- Actions taken:
+  - Re-read the project constraints and implementation/file-planning guidance, ran `git status --short`, and preserved all Phase 15 working-tree changes.
+  - Locked the implementation boundary: curve memory and B0 taper apply only to boot-Up LF-only mode; formal race configuration and route/IMU arbitration remain unchanged.
+  - Recorded the 181-row CSV evidence and the selected 600 ms full-boost, 600 ms taper, 31%/110 mm/s long-hold behavior without changing the 350 mm/s center speed.
+  - Added a second exported LF-only line-control configuration and selected it only when boot-Up mode is active; formal racing continues to use the default configuration with curve memory disabled.
+  - Implemented signed B1/B8 curve memory, B15/opposite-side clearing, same-side hold plus PD residual, exact B6/B9 hold, and the 600/600 ms B0 interpolation.
+  - Ensured the first pending direct-reversal cycle outputs zero without leaking the old remembered curve; B0 can still complete the existing second-cycle confirmation.
+  - Added focused regressions for timing boundaries, state transitions, symmetry, five speeds, long B0, and the wheel limit; the focused test and full host suite pass, with the latter at `18/18`.
+  - Updated README, WIRING, ROBOT_SETUP, and HARDWARE_ACCEPTANCE with the two-mode distinction, timing curve, UART CSV expectations, and field acceptance targets.
+  - Compiled `chassis_track_line_control.c`, `chassis_track_app.c`, `chassis_telemetry.c`, and `chassis_telemetry_uart.c` with ARM Compiler 5 under the race project defines/includes: `4/4 passed`.
+  - Parsed both Keil project XML files, passed `git diff --check`, and re-audited the 500 mm/s wheel, 20000 PWM, 8-cycle stall, and curve-memory constants.
+  - Confirmed the interactive `project_track.uvprojx` μVision process remains open; no competing UV4 build was launched, so both full Rebuilds remain a user handoff.
+
+### Phase 17: LF-Only Curve Exit Travel Guard
+- **Status:** in_progress
+- Actions taken:
+  - Re-read project constraints and both implementation/file-planning skills, ran session catch-up and `git status --short`, and preserved all existing Phase 15/16 changes.
+  - Parsed the new 109-row CSV and compared it with the earlier completed-lap CSV; isolated premature B4-triggered memory clearing as the direct cause of the departure.
+  - Locked the user-selected requested-speed integral guard: 1200 mm minimum curve travel plus five accepted opposite cycles, with no encoder/IMU steering input.
+  - Added saturating requested-travel accumulation, five-cycle accepted-opposite exit confirmation, immediate B15 clearing, and reset/new-session state cleanup without changing the public update signature.
+  - Kept early opposite inner patterns inside the active curve as PD residual; the failed sequence now produces about +89/+92 mm/s and its following B0 remains positive instead of holding -16 mm/s.
+  - Expanded focused regressions for the failed 280 mm sequence, 1200 mm boundary, B0 interruption, B15, same-side B1 travel preservation, left/right symmetry, and all five speeds; the strict GCC test passes.
+  - Added the opposite-outer exclusion and formal-race-disabled regressions, then ran the complete host suite successfully at `18/18 passed`.
+  - Updated README, WIRING, ROBOT_SETUP, and HARDWARE_ACCEPTANCE with the 1200 mm/five-cycle exit guard, early opposite residual behavior, and CSV acceptance checks without changing the 21-column format.
+  - Compiled the controller, application, telemetry, and telemetry-UART sources with ARM Compiler 5 under race defines/includes: `4/4 passed`.
+  - Parsed both Keil project XML files, passed `git diff --check`, and re-audited the 500 mm/s wheel, PWM 20000, eight-cycle stall, and 1200 mm/five-cycle guard constants.
+  - Confirmed the existing interactive `project_track.uvprojx` μVision process is still open; no competing UV4 build was launched.

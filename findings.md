@@ -34,6 +34,10 @@
 - Host coverage passes all 17 cases, including stage 0/1/2 compile variants and all B0-B15 sensor patterns.
 - Default `project.uvprojx` and race `project_track.uvprojx` both link with `0 Error(s), 0 Warning(s)`.
 - Final safety constants remain 6000 feedforward, 14000 race PID limit, and 20000 absolute duty cap; default self-test remains 11500 + 6000.
+- Phase 15 final documentation audit found one stale README architecture-tree label (`P控制`); detailed README/WIRING/ROBOT_SETUP/HARDWARE_ACCEPTANCE text already describes the new `Kp=1.2, Kd=0.20` PD controller and direct-reversal confirmation.
+- `chassis_telemetry_session_start()` calls `chassis_telemetry_clear()`, so every LF-only run starts with zero correction state and an empty buffer.
+- `chassis_emergency_stop()` zeroes target speeds and cached PWM counts before the LF-only Center-stop snapshot; `chassis_capture_telemetry_now()` then records the same chassis timestamp with zero correction/target/PWM and replaces a same-timestamp periodic sample rather than duplicating it.
+- The common mission/positive-distance `command_stop` branch must also clear the telemetry correction before its braking snapshot; otherwise the CSV would retain the last running infrared component after steering had stopped.
 
 ## LF04 Runtime Low-Level Investigation
 - `gpio_init(..., IN_UP)` selected pull-up input but did not explicitly clear the GPIO DOE bit; DriverLib PINCM input configuration alone does not clear `GPIOx->DOE31_0`.
@@ -132,3 +136,29 @@
 - The post-change portable suite passes all `18/18` groups, including dynamic 90/120 mm/s route arbitration and B1/B8 memory transitions.
 - Four affected production sources pass ARM Compiler 5 checks; both project XML files, trailing whitespace, `git diff --check`, and unchanged chassis safety limits also pass.
 - The already-open race μVision window prevents a parallel batch Rebuild. The remaining build acceptance is sequential user-triggered Rebuild of `project_track.uvprojx` and `project.uvprojx` at `0 Error(s), 0 Warning(s)`.
+
+## Phase 15 Anti-Wobble PD and LF-Only CSV
+- Hardware now completes a full LF04-only lap, but both 280 and 350 mm/s oscillate on straights and curves, with instability increasing with speed.
+- The selected first retune is `Kp=1.2`, `Ki=0`, `Kd=0.20`; immediate B1/B8 35%/120 mm/s boost remains unchanged so the proven cornering authority is preserved.
+- Pure LF04 steering remains infrared-only. UART export stays stopped-only; the existing 44-byte telemetry record's reserved byte will become signed `line_correction_mm_s`, producing 21 CSV columns without reducing the 600-record capacity.
+- Current LF-only running already starts the 10 Hz RAM session and stopped fault state already permits `D`; the missing pieces are explicit Center-stop session finalization, a zero-correction final snapshot, and correction-field export.
+
+## Phase 16 LF-Only Curve Memory Evidence
+- The latest 350 mm/s LF-only CSV contains 181 records over 18.12 s; both curved sections spend about 79% of their samples in B0, with maximum continuous B0 runs of about 3.0 s and 3.7 s.
+- During B0 with a commanded 120 mm/s correction, encoder speeds imply only about 84-85 mm/s realized wheel-space bias and roughly 45 deg/s yaw; the R500 geometry at the realized center speed needs about 77 mm/s.
+- The dominant defect is therefore late curve acquisition followed by multi-second maximum correction, PWM saturation, and exit oversteer—not insufficient P gain.
+- The selected fix is LF04-state curve memory only in LF-only mode: B1/B8 activate a signed hold bias, B15 clears it, and a confirmed opposite side clears or switches it. Formal racing retains its existing PD and route/IMU arbitration.
+- In remembered B0, correction holds the 35%/120 mm/s outer boost for 600 ms, linearly tapers for 600 ms, then holds `min(speed*0.31, 110)`. At 350 mm/s this is 120, about 114.25 at 900 ms, and 108.5 mm/s from 1200 ms onward.
+- The implemented line-only configuration is selected once at application initialization from the boot-Up mode flag; the formal-race configuration has `curve_memory_enabled=false`, so its route/IMU arbitration and B0 output remain unchanged.
+- Focused regressions cover B1/B8 symmetry, 600/900/1200 ms boundaries, B1-B0-B2-B6, direct opposite confirmation, B15 clearing, initial B0, all five speed levels, and the 500 mm/s wheel limit.
+- Portable verification passes: full host suite `18/18`, ARMCC production sources `4/4`, both Keil project XML files, `git diff --check`, and the unchanged 500 mm/s, PWM 20000, and 8-cycle stall limits.
+
+## Phase 17 Premature Curve-Memory Exit Evidence
+- The failed 350 mm/s session has 109 records over 10.92 s. Straight running is acceptable; B1 at 5.72 s correctly raises correction to +120 mm/s and fused heading from about 8 deg to 49 deg.
+- B4 at 6.52-6.62 s clears positive curve memory after only about 0.8 s and 280 mm. Correction becomes -19/-16 mm/s, then B0 holds -16 for about 3.6 s while fused heading falls from about 48 deg to 23 deg, directly explaining the outside-track departure.
+- The earlier completed lap shows first B1-to-exit and second B1-to-B15 spans of about 1.4-1.5 m. Therefore an opposite inner pattern at 280 mm is lateral recentering, not a curve-exit signal.
+- At +120 mm/s commanded correction the realized yaw rate averages about 44.1 deg/s; R500 at the realized 325.6 mm/s needs about 37.3 deg/s. The existing 31%/110 mm/s long hold remains appropriate; gain and hold magnitude must not be increased.
+- The user selected a requested-speed integral guard: curve exit cannot be accepted before 1200 mm of commanded travel, and encoder/IMU remain excluded from LF-only steering.
+- The implemented guard saturates at 1200 mm, ignores B0 and opposite outer-single patterns for exit, and requires five accepted opposite non-outer samples after the distance gate. Repeated same-side B1/B8 does not reset travel; B15 still clears immediately.
+- The failed sequence regression produces about +89/+92 mm/s for confirmed early B4 and returns to positive B0 boost/hold, eliminating the observed multi-second -16 mm/s reversal.
+- Portable verification passes: host suite `18/18`, ARMCC sources `4/4`, both project XML files, `git diff --check`, and unchanged 500 mm/s, PWM 20000, and eight-cycle stall limits.

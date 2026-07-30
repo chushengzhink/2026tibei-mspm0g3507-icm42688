@@ -21,20 +21,36 @@ typedef struct {
     float correction_ratio;
     float outer_single_maximum_correction_mm_s;
     float outer_single_correction_ratio;
+    float curve_hold_maximum_correction_mm_s;
+    float curve_hold_correction_ratio;
+    float curve_exit_minimum_travel_mm;
     float kp;
     float ki;
     float kd;
     float pid_output_limit;
     float pid_integral_limit;
     uint16_t control_period_ms;
+    uint16_t outer_lost_full_boost_ms;
+    uint16_t outer_lost_taper_ms;
+    uint8_t reverse_confirm_cycles;
+    uint8_t curve_exit_confirm_cycles;
+    bool curve_memory_enabled;
 } chassis_track_line_control_config_t;
 
 typedef struct {
     chassis_track_line_control_config_t config;
     pid_t pid;
     float last_line_error;
+    float pending_line_error;
+    float curve_travel_mm;
     uint8_t last_valid_black_bits;
+    int8_t accepted_side;
+    int8_t pending_side;
+    int8_t curve_memory_side;
+    uint8_t pending_cycles;
+    uint8_t curve_exit_cycles;
     uint16_t lost_ms;
+    bool has_valid_error;
     bool initialized;
 } chassis_track_line_control_t;
 
@@ -52,6 +68,8 @@ typedef struct {
 
 extern const chassis_track_line_control_config_t
     g_chassis_track_line_control_default_config;
+extern const chassis_track_line_control_config_t
+    g_chassis_track_line_control_line_only_config;
 
 ml_status_t chassis_track_line_control_init(
     chassis_track_line_control_t *control,

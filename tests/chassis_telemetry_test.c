@@ -84,19 +84,21 @@ int main(void)
         "encoder_heading_deg,fused_heading_deg,imu_yaw_deg,"
         "fused_yaw_rate_dps,fusion_active,elapsed_ms,lap_total_ms,"
         "target_center_mm_s,actual_center_mm_s,left_pwm_count,"
-        "right_pwm_count,line_bits,line_usable,line_recovering,"
+        "right_pwm_count,line_bits,line_correction_mm_s,line_usable,"
+        "line_recovering,"
         "line_pattern_invalid\r\n";
     static const char two_record_csv[] =
         "time_ms,left_ticks,right_ticks,x_mm,y_mm,"
         "encoder_heading_deg,fused_heading_deg,imu_yaw_deg,"
         "fused_yaw_rate_dps,fusion_active,elapsed_ms,lap_total_ms,"
         "target_center_mm_s,actual_center_mm_s,left_pwm_count,"
-        "right_pwm_count,line_bits,line_usable,line_recovering,"
+        "right_pwm_count,line_bits,line_correction_mm_s,line_usable,"
+        "line_recovering,"
         "line_pattern_invalid\r\n"
         "100,1,2,3.000,4.000,185.00,185.50,6.00,7.25,1,50,200,"
-        "100.0,90.0,12000,11000,6,1,0,0\r\n"
+        "100.0,90.0,12000,11000,6,0,1,0,0\r\n"
         "200,-3,4,-1.250,2.500,360.00,360.50,45.00,-8.50,0,"
-        "150,200,0.0,5.0,0,0,15,0,1,1\r\n";
+        "150,200,0.0,5.0,0,0,15,-120,0,1,1\r\n";
     chassis_telemetry_record_t record;
     uint16_t index;
 
@@ -151,6 +153,30 @@ int main(void)
         record.fused_yaw_rate_cdps == INT16_MIN,
         "negative yaw rate saturates in the 0.01 dps field");
     chassis_telemetry_clear();
+    chassis_telemetry_set_line_correction(200.0f);
+    check(chassis_telemetry_record(0U, 0, 0, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0U, 0U, false) == ML_STATUS_OK &&
+        chassis_telemetry_get(0U, &record) == ML_STATUS_OK &&
+        record.line_correction_mm_s == INT8_MAX,
+        "positive line correction saturates in the signed byte field");
+    chassis_telemetry_clear();
+    chassis_telemetry_set_line_correction(120.0f);
+    check(chassis_telemetry_record(0U, 0, 0, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0U, 0U, false) == ML_STATUS_OK &&
+        chassis_telemetry_get(0U, &record) == ML_STATUS_OK &&
+        record.line_correction_mm_s == 120,
+        "outer-single positive correction is stored exactly");
+    chassis_telemetry_clear();
+    chassis_telemetry_set_line_correction(-200.0f);
+    check(chassis_telemetry_record(0U, 0, 0, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0U, 0U, false) == ML_STATUS_OK &&
+        chassis_telemetry_get(0U, &record) == ML_STATUS_OK &&
+        record.line_correction_mm_s == INT8_MIN,
+        "negative line correction saturates in the signed byte field");
+    chassis_telemetry_clear();
     reset_uart_capture();
     check(chassis_telemetry_uart0_handle_byte('D', true) == ML_STATUS_OK &&
         strcmp(g_uart_capture, csv_header) == 0 &&
@@ -165,10 +191,12 @@ int main(void)
         "a reentrant D is rejected without duplicating the active export");
     chassis_telemetry_session_start(50U);
     chassis_telemetry_set_line_state(0x06U, true, false, false);
+    chassis_telemetry_set_line_correction(42.9f);
     check(chassis_telemetry_record(100U, 1, 2, 3.0f, 4.0f,
         5.0f, 5.5f, 6.0f, 7.25f, 100.0f, 90.0f,
         12000U, 11000U, true) == ML_STATUS_OK,
         "first UART command test record is stored");
+    chassis_telemetry_set_line_correction(0.0f);
     check(chassis_telemetry_record(100U, 1, 2, 3.0f, 4.0f,
         185.0f, 185.5f, 6.0f, 7.25f, 100.0f, 90.0f,
         12000U, 11000U, true) == ML_STATUS_OK &&
@@ -176,6 +204,7 @@ int main(void)
         chassis_telemetry_get(0U, &record) == ML_STATUS_OK &&
         record.encoder_heading_cdeg == 18500 &&
         record.fused_heading_cdeg == 18550 &&
+        record.line_correction_mm_s == 0 &&
         (record.line_state_flags & CHASSIS_TELEMETRY_LINE_USABLE) != 0U,
         "same-timestamp stop snapshot replaces instead of duplicating");
     reset_uart_capture();
@@ -204,6 +233,7 @@ int main(void)
         ML_STATUS_TIMEOUT && g_uart_bytes == 5U,
         "diagnostic banner propagates TX failure without continuing");
     chassis_telemetry_set_line_state(0x0FU, false, true, true);
+    chassis_telemetry_set_line_correction(-120.0f);
     check(chassis_telemetry_record(200U, -3, 4, -1.25f, 2.5f,
         360.0f, 360.5f, 45.0f, -8.5f, 0.0f, 5.0f,
         0U, 0U, false) == ML_STATUS_OK,

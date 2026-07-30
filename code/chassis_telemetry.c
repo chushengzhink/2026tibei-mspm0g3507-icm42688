@@ -13,6 +13,7 @@ static uint32_t g_session_start_ms;
 static uint32_t g_session_total_ms;
 static uint8_t g_line_bits;
 static uint8_t g_line_state_flags;
+static int8_t g_line_correction_mm_s;
 static bool g_session_started;
 static bool g_session_finished;
 
@@ -64,6 +65,17 @@ static int16_t telemetry_speed_to_dmm_s(float speed_mm_s)
         return INT16_MIN;
     }
     return (int16_t) (speed_mm_s * 10.0f);
+}
+
+static int8_t telemetry_correction_to_mm_s(float correction_mm_s)
+{
+    if (correction_mm_s >= 127.0f) {
+        return INT8_MAX;
+    }
+    if (correction_mm_s <= -128.0f) {
+        return INT8_MIN;
+    }
+    return (int8_t) correction_mm_s;
 }
 
 static uint16_t telemetry_append_char(
@@ -151,6 +163,7 @@ void chassis_telemetry_clear(void)
     g_session_total_ms = 0U;
     g_line_bits = 0U;
     g_line_state_flags = 0U;
+    g_line_correction_mm_s = 0;
     g_session_started = false;
     g_session_finished = false;
 }
@@ -190,6 +203,16 @@ void chassis_telemetry_set_line_state(uint8_t line_bits,
     }
     if (pattern_invalid) {
         g_line_state_flags |= CHASSIS_TELEMETRY_LINE_PATTERN_INVALID;
+    }
+}
+
+void chassis_telemetry_set_line_correction(float correction_mm_s)
+{
+    if (telemetry_float_valid(correction_mm_s)) {
+        g_line_correction_mm_s =
+            telemetry_correction_to_mm_s(correction_mm_s);
+    } else {
+        g_line_correction_mm_s = 0;
     }
 }
 
@@ -247,7 +270,7 @@ ml_status_t chassis_telemetry_record(uint32_t timestamp_ms,
     record->fusion_active = fusion_active ? 1U : 0U;
     record->line_bits = g_line_bits;
     record->line_state_flags = g_line_state_flags;
-    record->reserved = 0U;
+    record->line_correction_mm_s = g_line_correction_mm_s;
     return ML_STATUS_OK;
 }
 
@@ -282,7 +305,8 @@ ml_status_t chassis_telemetry_export_csv(
         "fused_heading_deg,imu_yaw_deg,fused_yaw_rate_dps,"
         "fusion_active,elapsed_ms,lap_total_ms,target_center_mm_s,"
         "actual_center_mm_s,left_pwm_count,right_pwm_count,line_bits,"
-        "line_usable,line_recovering,line_pattern_invalid\r\n";
+        "line_correction_mm_s,line_usable,line_recovering,"
+        "line_pattern_invalid\r\n";
     char line[208];
     uint16_t line_length;
     uint16_t index;
@@ -351,6 +375,9 @@ ml_status_t chassis_telemetry_export_csv(
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_uint32(line, line_length,
             g_records[index].line_bits);
+        line_length = telemetry_append_char(line, line_length, ',');
+        line_length = telemetry_append_int32(line, line_length,
+            g_records[index].line_correction_mm_s);
         line_length = telemetry_append_char(line, line_length, ',');
         line_length = telemetry_append_uint32(line, line_length,
             (g_records[index].line_state_flags &

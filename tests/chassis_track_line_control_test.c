@@ -273,8 +273,10 @@ static void test_outer_boost_memory_transitions(void)
     line_sample_t inner_right = sample_for(0x04U);
     line_sample_t outer_right = sample_for(0x08U);
     line_sample_t lost = sample_for(0x00U);
-    float inner_correction = expected_correction(
-        0x02U, 29.0f / 161.0f, 350.0f);
+    float inner_error = 29.0f / 161.0f;
+    float release_correction = 77.0f *
+        ((1.2f * inner_error) +
+         (0.20f * (inner_error - 1.0f)));
 
     (void) chassis_track_line_control_init(&control,
         &g_chassis_track_line_control_default_config);
@@ -283,15 +285,17 @@ static void test_outer_boost_memory_transitions(void)
     (void) chassis_track_line_control_update(&control, &lost,
         350.0f, 0.0f, &output);
     check(near_value(output.correction_mm_s, 120.0f, 0.001f) &&
-        control.last_valid_black_bits == 0x01U,
+        control.last_valid_black_bits == 0x01U &&
+        control.curve_memory_side == 0 &&
+        near_value(control.curve_travel_mm, 0.0f, 0.001f),
         "B1 to B0 retains outer-left boost");
 
     (void) chassis_track_line_control_update(&control, &inner_left,
         350.0f, 0.0f, &output);
     check(near_value(output.correction_mm_s,
-              inner_correction, 0.001f) &&
+              release_correction, 0.001f) &&
         control.last_valid_black_bits == 0x02U,
-        "B2 immediately exits remembered outer-left boost");
+        "B2 exits outer-left boost with derivative release damping");
 
     chassis_track_line_control_reset(&control);
     (void) chassis_track_line_control_update(&control, &outer_right,
@@ -305,9 +309,9 @@ static void test_outer_boost_memory_transitions(void)
     (void) chassis_track_line_control_update(&control, &inner_right,
         350.0f, 0.0f, &output);
     check(near_value(output.correction_mm_s,
-              -inner_correction, 0.001f) &&
+              -release_correction, 0.001f) &&
         control.last_valid_black_bits == 0x04U,
-        "B4 immediately exits remembered outer-right boost");
+        "B4 exits outer-right boost with derivative release damping");
 
     chassis_track_line_control_reset(&control);
     (void) chassis_track_line_control_update(&control, &outer_left,
@@ -316,9 +320,74 @@ static void test_outer_boost_memory_transitions(void)
         350.0f, 0.0f, &output);
     (void) chassis_track_line_control_update(&control, &inner_right,
         350.0f, 0.0f, &output);
-    check(output.correction_mm_s < 0.0f &&
+    check(near_value(output.correction_mm_s, 0.0f, 0.001f) &&
+        control.pending_cycles == 1U &&
         control.last_valid_black_bits == 0x04U,
-        "new B4 reverses a remembered B1 direction immediately");
+        "first direct B1-to-B4 reversal is suppressed for one cycle");
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    check(output.correction_mm_s < 0.0f &&
+        control.pending_cycles == 0U,
+        "second direct B4 sample confirms the reversed direction");
+}
+
+static void test_pd_damping_and_direct_reversal_confirmation(void)
+{
+    chassis_track_line_control_t control = {0};
+    chassis_track_line_control_output_t output;
+    line_sample_t inner_left = sample_for(0x02U);
+    line_sample_t centered = sample_for(0x06U);
+    line_sample_t inner_right = sample_for(0x04U);
+    line_sample_t lost = sample_for(0x00U);
+    float inner_error = 29.0f / 161.0f;
+    float steady = 77.0f * 1.2f * inner_error;
+    float center_damping = -77.0f * 0.20f * inner_error;
+    float confirmed_right = -77.0f *
+        ((1.2f * inner_error) + (0.20f * inner_error));
+
+    (void) chassis_track_line_control_init(&control,
+        &g_chassis_track_line_control_default_config);
+    (void) chassis_track_line_control_update(&control, &inner_left,
+        350.0f, 0.0f, &output);
+    check(near_value(output.correction_mm_s, steady, 0.001f),
+        "first valid B2 has steady P correction without derivative kick");
+
+    (void) chassis_track_line_control_update(&control, &centered,
+        350.0f, 0.0f, &output);
+    check(near_value(output.correction_mm_s,
+              center_damping, 0.001f),
+        "B2 to centered adds a small opposite derivative damping pulse");
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    check(near_value(output.correction_mm_s,
+              confirmed_right, 0.001f),
+        "centered to B4 is accepted immediately with symmetric PD");
+
+    chassis_track_line_control_reset(&control);
+    (void) chassis_track_line_control_update(&control, &inner_left,
+        350.0f, 0.0f, &output);
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    check(near_value(output.correction_mm_s, 0.0f, 0.001f) &&
+        control.pending_cycles == 1U,
+        "one direct B2-to-B4 sample is treated as a reversal glitch");
+    (void) chassis_track_line_control_update(&control, &inner_left,
+        350.0f, 0.0f, &output);
+    check(output.correction_mm_s > 0.0f &&
+        control.pending_cycles == 0U,
+        "returning to B2 cancels the pending reversal");
+
+    chassis_track_line_control_reset(&control);
+    (void) chassis_track_line_control_update(&control, &inner_left,
+        350.0f, 0.0f, &output);
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    (void) chassis_track_line_control_update(&control, &lost,
+        350.0f, 0.0f, &output);
+    check(output.correction_mm_s < 0.0f && output.recovering &&
+        control.pending_cycles == 0U &&
+        control.accepted_side == -1,
+        "B0 confirms and holds a pending direct right reversal");
 }
 
 static void test_b0_holds_each_last_error(void)
@@ -363,9 +432,12 @@ static void test_b0_holds_each_last_error(void)
         (void) chassis_track_line_control_update(&control, &centered,
             350.0f, 0.0f, &output);
         check(output.lost_ms == 0U && !output.recovering &&
-            output.line_valid &&
-            near_value(output.correction_mm_s, 0.0f, 0.001f),
+            output.line_valid,
             "a new valid centroid immediately clears held recovery");
+        (void) chassis_track_line_control_update(&control, &centered,
+            350.0f, 0.0f, &output);
+        check(near_value(output.correction_mm_s, 0.0f, 0.001f),
+            "a steady centered sample clears the derivative pulse");
     }
 }
 
@@ -435,15 +507,398 @@ static void test_pid_history_is_not_reset_between_patterns(void)
         "B0 continues PID with the held last centroid error");
 }
 
+static void test_line_only_curve_memory_b0_taper(void)
+{
+    chassis_track_line_control_t control = {0};
+    chassis_track_line_control_output_t output;
+    line_sample_t outer_left = sample_for(0x01U);
+    line_sample_t outer_right = sample_for(0x08U);
+    line_sample_t lost = sample_for(0x00U);
+    uint8_t cycle;
+
+    (void) chassis_track_line_control_init(&control,
+        &g_chassis_track_line_control_line_only_config);
+    (void) chassis_track_line_control_update(&control, &outer_left,
+        350.0f, 0.0f, &output);
+    check(near_value(output.correction_mm_s, 120.0f, 0.001f) &&
+        control.curve_memory_side == 1,
+        "LF-only B1 immediately activates left curve memory");
+
+    for (cycle = 0U; cycle < 30U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &lost,
+            350.0f, 0.0f, &output);
+    }
+    check(output.lost_ms == 600U &&
+        near_value(output.correction_mm_s, 120.0f, 0.001f),
+        "remembered B0 keeps full outer boost through 600 ms");
+    for (cycle = 0U; cycle < 15U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &lost,
+            350.0f, 0.0f, &output);
+    }
+    check(output.lost_ms == 900U &&
+        near_value(output.correction_mm_s, 114.25f, 0.001f),
+        "remembered B0 tapers halfway at 900 ms");
+    for (cycle = 0U; cycle < 15U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &lost,
+            350.0f, 0.0f, &output);
+    }
+    check(output.lost_ms == 1200U &&
+        near_value(output.correction_mm_s, 108.5f, 0.001f),
+        "remembered B0 reaches the curve hold at 1200 ms");
+    for (cycle = 0U; cycle < 100U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &lost,
+            350.0f, 0.0f, &output);
+    }
+    check(near_value(output.correction_mm_s, 108.5f, 0.001f) &&
+        near_value(output.left_mm_s, 241.5f, 0.001f) &&
+        near_value(output.right_mm_s, 458.5f, 0.001f),
+        "long remembered B0 holds the R500 curve bias indefinitely");
+
+    chassis_track_line_control_reset(&control);
+    (void) chassis_track_line_control_update(&control, &outer_right,
+        350.0f, 0.0f, &output);
+    for (cycle = 0U; cycle < 60U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &lost,
+            350.0f, 0.0f, &output);
+    }
+    check(near_value(output.correction_mm_s, -108.5f, 0.001f) &&
+        control.curve_memory_side == -1,
+        "B8 curve memory and long B0 hold mirror B1 exactly");
+}
+
+static void test_line_only_curve_memory_transitions(void)
+{
+    chassis_track_line_control_t control = {0};
+    chassis_track_line_control_output_t output;
+    line_sample_t outer_left = sample_for(0x01U);
+    line_sample_t inner_left = sample_for(0x02U);
+    line_sample_t centered = sample_for(0x06U);
+    line_sample_t inner_right = sample_for(0x04U);
+    line_sample_t all_black = sample_for(0x0FU);
+    line_sample_t lost = sample_for(0x00U);
+
+    (void) chassis_track_line_control_init(&control,
+        &g_chassis_track_line_control_line_only_config);
+    (void) chassis_track_line_control_update(&control, &outer_left,
+        350.0f, 0.0f, &output);
+    (void) chassis_track_line_control_update(&control, &lost,
+        350.0f, 0.0f, &output);
+    (void) chassis_track_line_control_update(&control, &inner_left,
+        350.0f, 0.0f, &output);
+    check(output.correction_mm_s > 108.5f &&
+        output.correction_mm_s <= 120.0f &&
+        control.curve_memory_side == 1,
+        "B1-B0-B2 combines curve hold with same-side PD residual");
+    (void) chassis_track_line_control_update(&control, &centered,
+        350.0f, 0.0f, &output);
+    check(near_value(output.correction_mm_s, 108.5f, 0.001f) &&
+        control.curve_memory_side == 1,
+        "B6 keeps the remembered curve centered between inner sensors");
+
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    check(output.correction_mm_s > 85.0f &&
+        output.correction_mm_s < 95.0f &&
+        control.curve_memory_side == 1,
+        "an early opposite inner sample remains a curve PD residual");
+
+    chassis_track_line_control_reset(&control);
+    (void) chassis_track_line_control_update(&control, &outer_left,
+        350.0f, 0.0f, &output);
+    (void) chassis_track_line_control_update(&control, &lost,
+        350.0f, 0.0f, &output);
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    check(near_value(output.correction_mm_s, 0.0f, 0.001f) &&
+        control.curve_memory_side == 1 &&
+        control.pending_cycles == 1U,
+        "first direct reversal suppresses both PD and old curve memory");
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    check(output.correction_mm_s > 85.0f &&
+        output.correction_mm_s < 95.0f &&
+        control.curve_memory_side == 1 &&
+        control.pending_cycles == 0U,
+        "confirmed early opposite sensor cannot clear curve memory");
+
+    chassis_track_line_control_reset(&control);
+    (void) chassis_track_line_control_update(&control, &outer_left,
+        350.0f, 0.0f, &output);
+    (void) chassis_track_line_control_update(&control, &all_black,
+        350.0f, 0.0f, &output);
+    check(control.curve_memory_side == 0,
+        "B15 clears curve memory without changing controller state");
+    (void) chassis_track_line_control_update(&control, &all_black,
+        350.0f, 0.0f, &output);
+    check(near_value(output.correction_mm_s, 0.0f, 0.001f),
+        "steady B15 returns to ordinary centered PD");
+
+    chassis_track_line_control_reset(&control);
+    (void) chassis_track_line_control_update(&control, &lost,
+        350.0f, 0.0f, &output);
+    check(control.curve_memory_side == 0 &&
+        near_value(output.correction_mm_s, 0.0f, 0.001f),
+        "initial B0 cannot invent curve memory");
+}
+
+static void test_line_only_curve_memory_speed_scaling(void)
+{
+    static const float speeds[5] = {
+        60.0f, 120.0f, 200.0f, 280.0f, 350.0f
+    };
+    static const float boost[5] = {
+        21.0f, 42.0f, 70.0f, 98.0f, 120.0f
+    };
+    static const float hold[5] = {
+        18.6f, 37.2f, 62.0f, 86.8f, 108.5f
+    };
+    chassis_track_line_control_t control = {0};
+    chassis_track_line_control_output_t output;
+    line_sample_t outer_left = sample_for(0x01U);
+    line_sample_t lost = sample_for(0x00U);
+    uint8_t speed_index;
+    uint8_t cycle;
+
+    (void) chassis_track_line_control_init(&control,
+        &g_chassis_track_line_control_line_only_config);
+    for (speed_index = 0U; speed_index < 5U; ++speed_index) {
+        chassis_track_line_control_reset(&control);
+        (void) chassis_track_line_control_update(&control, &outer_left,
+            speeds[speed_index], 0.0f, &output);
+        check(near_value(output.correction_mm_s,
+                  boost[speed_index], 0.001f),
+            "each LF-only speed uses the configured outer boost ratio");
+        for (cycle = 0U; cycle < 60U; ++cycle) {
+            (void) chassis_track_line_control_update(&control, &lost,
+                speeds[speed_index], 0.0f, &output);
+        }
+        check(near_value(output.correction_mm_s,
+                  hold[speed_index], 0.001f) &&
+            fabsf(output.left_mm_s) <= 500.001f &&
+            fabsf(output.right_mm_s) <= 500.001f,
+            "each LF-only speed reaches its proportional safe curve hold");
+    }
+}
+
+static void test_line_only_failed_curve_sequence_replay(void)
+{
+    chassis_track_line_control_t control = {0};
+    chassis_track_line_control_output_t output;
+    line_sample_t outer_left = sample_for(0x01U);
+    line_sample_t inner_left = sample_for(0x02U);
+    line_sample_t inner_right = sample_for(0x04U);
+    line_sample_t lost = sample_for(0x00U);
+    float first_opposite;
+    float steady_opposite;
+    uint8_t cycle;
+
+    (void) chassis_track_line_control_init(&control,
+        &g_chassis_track_line_control_line_only_config);
+    (void) chassis_track_line_control_update(&control, &outer_left,
+        350.0f, 0.0f, &output);
+    for (cycle = 0U; cycle < 37U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &lost,
+            350.0f, 0.0f, &output);
+    }
+    (void) chassis_track_line_control_update(&control, &inner_left,
+        350.0f, 0.0f, &output);
+    (void) chassis_track_line_control_update(&control, &lost,
+        350.0f, 0.0f, &output);
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    check(near_value(control.curve_travel_mm, 280.0f, 0.001f) &&
+        near_value(output.correction_mm_s, 0.0f, 0.001f) &&
+        control.curve_memory_side == 1,
+        "failed CSV first early B4 is suppressed at about 280 mm");
+
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    first_opposite = output.correction_mm_s;
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    steady_opposite = output.correction_mm_s;
+    check(first_opposite > 88.0f && first_opposite < 91.0f &&
+        steady_opposite > 91.0f && steady_opposite < 93.0f &&
+        control.curve_memory_side == 1,
+        "early B4 keeps positive curve hold plus negative PD residual");
+
+    (void) chassis_track_line_control_update(&control, &lost,
+        350.0f, 0.0f, &output);
+    check(near_value(output.correction_mm_s, 120.0f, 0.001f) &&
+        control.curve_memory_side == 1,
+        "B0 after early B4 resumes the remembered positive curve");
+    for (cycle = 1U; cycle < 60U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &lost,
+            350.0f, 0.0f, &output);
+    }
+    check(near_value(output.correction_mm_s, 108.5f, 0.001f) &&
+        control.curve_memory_side == 1,
+        "failed CSV replay settles to positive hold instead of minus 16");
+}
+
+static void test_line_only_curve_exit_confirmation(void)
+{
+    chassis_track_line_control_t control = {0};
+    chassis_track_line_control_output_t output;
+    line_sample_t outer_left = sample_for(0x01U);
+    line_sample_t outer_right = sample_for(0x08U);
+    line_sample_t inner_left = sample_for(0x02U);
+    line_sample_t inner_right = sample_for(0x04U);
+    line_sample_t all_black = sample_for(0x0FU);
+    line_sample_t lost = sample_for(0x00U);
+    uint16_t cycle;
+
+    (void) chassis_track_line_control_init(&control,
+        &g_chassis_track_line_control_line_only_config);
+    (void) chassis_track_line_control_update(&control, &outer_left,
+        350.0f, 0.0f, &output);
+    for (cycle = 0U; cycle < 172U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &lost,
+            350.0f, 0.0f, &output);
+    }
+    check(near_value(control.curve_travel_mm, 1200.0f, 0.001f),
+        "curve exit becomes eligible at 1200 mm requested travel");
+    for (cycle = 0U; cycle < 5U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &inner_right,
+            350.0f, 0.0f, &output);
+    }
+    check(control.curve_memory_side == 1 &&
+        control.curve_exit_cycles == 4U,
+        "four accepted opposite cycles cannot exit the remembered curve");
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    check(control.curve_memory_side == 0 &&
+        control.curve_exit_cycles == 0U &&
+        output.correction_mm_s < 0.0f,
+        "fifth accepted opposite cycle exits to ordinary PD");
+
+    chassis_track_line_control_reset(&control);
+    (void) chassis_track_line_control_update(&control, &outer_left,
+        350.0f, 0.0f, &output);
+    for (cycle = 0U; cycle < 172U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &lost,
+            350.0f, 0.0f, &output);
+    }
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    (void) chassis_track_line_control_update(&control, &lost,
+        350.0f, 0.0f, &output);
+    check(control.curve_memory_side == 1 &&
+        control.curve_exit_cycles == 0U &&
+        output.correction_mm_s > 0.0f,
+        "B0 resets exit confirmation and cannot complete curve exit");
+
+    chassis_track_line_control_reset(&control);
+    (void) chassis_track_line_control_update(&control, &outer_right,
+        350.0f, 0.0f, &output);
+    for (cycle = 0U; cycle < 172U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &lost,
+            350.0f, 0.0f, &output);
+    }
+    for (cycle = 0U; cycle < 6U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &inner_left,
+            350.0f, 0.0f, &output);
+    }
+    check(control.curve_memory_side == 0 &&
+        output.correction_mm_s > 0.0f,
+        "right curve exit guard mirrors the left curve exactly");
+
+    chassis_track_line_control_reset(&control);
+    (void) chassis_track_line_control_update(&control, &outer_left,
+        350.0f, 0.0f, &output);
+    for (cycle = 0U; cycle < 172U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &lost,
+            350.0f, 0.0f, &output);
+    }
+    for (cycle = 0U; cycle < 6U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &outer_right,
+            350.0f, 0.0f, &output);
+    }
+    check(control.curve_memory_side == 1 &&
+        control.curve_exit_cycles == 0U,
+        "opposite outer single never acts as a curve exit signal");
+
+    chassis_track_line_control_reset(&control);
+    (void) chassis_track_line_control_update(&control, &outer_left,
+        350.0f, 0.0f, &output);
+    for (cycle = 0U; cycle < 100U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &lost,
+            350.0f, 0.0f, &output);
+    }
+    (void) chassis_track_line_control_update(&control, &outer_left,
+        350.0f, 0.0f, &output);
+    check(control.curve_travel_mm > 700.0f &&
+        control.curve_memory_side == 1,
+        "repeated same-side B1 does not reset curve travel");
+    (void) chassis_track_line_control_update(&control, &all_black,
+        350.0f, 0.0f, &output);
+    check(control.curve_memory_side == 0 &&
+        near_value(control.curve_travel_mm, 0.0f, 0.001f),
+        "B15 immediately clears curve memory and travel");
+}
+
+static void test_line_only_curve_exit_speed_scaling(void)
+{
+    static const float speeds[5] = {
+        60.0f, 120.0f, 200.0f, 280.0f, 350.0f
+    };
+    static const uint16_t cycles_to_gate[5] = {
+        1000U, 500U, 300U, 215U, 172U
+    };
+    chassis_track_line_control_t control = {0};
+    chassis_track_line_control_output_t output;
+    line_sample_t outer_left = sample_for(0x01U);
+    line_sample_t lost = sample_for(0x00U);
+    uint16_t cycle;
+    uint8_t speed_index;
+
+    (void) chassis_track_line_control_init(&control,
+        &g_chassis_track_line_control_line_only_config);
+    for (speed_index = 0U; speed_index < 5U; ++speed_index) {
+        chassis_track_line_control_reset(&control);
+        (void) chassis_track_line_control_update(&control, &outer_left,
+            speeds[speed_index], 0.0f, &output);
+        for (cycle = 1U;
+             cycle < cycles_to_gate[speed_index]; ++cycle) {
+            (void) chassis_track_line_control_update(&control, &lost,
+                speeds[speed_index], 0.0f, &output);
+        }
+        check(control.curve_travel_mm < 1200.0f,
+            "curve gate stays closed one cycle early at every speed");
+        (void) chassis_track_line_control_update(&control, &lost,
+            speeds[speed_index], 0.0f, &output);
+        check(near_value(control.curve_travel_mm, 1200.0f, 0.001f),
+            "curve gate opens by requested distance at every speed");
+    }
+}
+
 static void test_invalid_input(void)
 {
     chassis_track_line_control_t control = {0};
+    chassis_track_line_control_config_t config =
+        g_chassis_track_line_control_default_config;
     chassis_track_line_control_output_t output;
     line_sample_t sample = sample_for(0x06U);
 
     check(chassis_track_line_control_update(&control, &sample,
               120.0f, 0.0f, &output) == ML_STATUS_NOT_INITIALIZED,
         "update rejects uninitialized control");
+    config.reverse_confirm_cycles = 0U;
+    check(chassis_track_line_control_init(&control, &config) ==
+          ML_STATUS_INVALID_ARGUMENT,
+        "initialization rejects zero reversal confirmation cycles");
+    config = g_chassis_track_line_control_default_config;
+    config.curve_exit_minimum_travel_mm = 0.0f;
+    check(chassis_track_line_control_init(&control, &config) ==
+          ML_STATUS_INVALID_ARGUMENT,
+        "initialization rejects a zero curve exit distance");
+    config = g_chassis_track_line_control_default_config;
+    config.curve_exit_confirm_cycles = 0U;
+    check(chassis_track_line_control_init(&control, &config) ==
+          ML_STATUS_INVALID_ARGUMENT,
+        "initialization rejects zero curve exit confirmation cycles");
     (void) chassis_track_line_control_init(&control,
         &g_chassis_track_line_control_default_config);
     sample.io_fault = true;
@@ -459,9 +914,16 @@ int main(void)
     test_speed_ratio_and_wheel_limit();
     test_infrared_priority_over_route();
     test_outer_boost_memory_transitions();
+    test_pd_damping_and_direct_reversal_confirmation();
     test_b0_holds_each_last_error();
     test_initial_b0_and_counter_saturation();
     test_pid_history_is_not_reset_between_patterns();
+    test_line_only_curve_memory_b0_taper();
+    test_line_only_curve_memory_transitions();
+    test_line_only_curve_memory_speed_scaling();
+    test_line_only_failed_curve_sequence_replay();
+    test_line_only_curve_exit_confirmation();
+    test_line_only_curve_exit_speed_scaling();
     test_invalid_input();
     if (g_failures == 0) {
         puts("chassis track line control tests passed");

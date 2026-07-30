@@ -366,7 +366,8 @@ ml_status_t chassis_track_app_init(void)
             &g_chassis_track_line_test_default_config);
     }
     if (status == ML_STATUS_OK) {
-        line_control_config =
+        line_control_config = g_track_app.line_only_mode ?
+            g_chassis_track_line_control_line_only_config :
             g_chassis_track_line_control_default_config;
         line_control_config.effective_track_mm =
             g_chassis_race_config.effective_track_mm;
@@ -543,6 +544,12 @@ void chassis_track_app_poll(void)
         }
     } else if ((g_track_app.state == TRACK_APP_RUNNING) && key_press) {
         chassis_emergency_stop();
+        g_track_app.velocity_started = false;
+        if (g_track_app.line_only_mode) {
+            chassis_telemetry_session_finish(status.timestamp_ms);
+            chassis_telemetry_set_line_correction(0.0f);
+            (void) chassis_capture_telemetry_now();
+        }
         g_track_app.output.state = CHASSIS_TRACK_FAULT_EMERGENCY;
         g_track_app.fault_status = ML_STATUS_TIMEOUT;
         g_track_app.state = TRACK_APP_FAULT;
@@ -585,6 +592,7 @@ void chassis_track_app_poll(void)
             if (!g_track_app.braking_capture_started) {
                 chassis_stop();
                 g_track_app.velocity_started = false;
+                chassis_telemetry_set_line_correction(0.0f);
                 if ((g_track_app.line_only_mode &&
                      (g_track_app.line_test_output.state ==
                       CHASSIS_TRACK_LINE_TEST_BRAKING)) ||
@@ -630,6 +638,8 @@ void chassis_track_app_poll(void)
                     g_track_app.line_control_output.line_valid,
                     g_track_app.line_control_output.recovering,
                     false);
+                chassis_telemetry_set_line_correction(
+                    g_track_app.line_control_output.correction_mm_s);
             }
             if ((command_status == ML_STATUS_OK) &&
                 (g_track_app.state == TRACK_APP_RUNNING)) {
