@@ -37,16 +37,30 @@ typedef struct {
 
 typedef struct {
     imu_attitude_angles_t angles;
+    float accel_norm_g;
+    float gyro_norm_dps;
+    float body_gyro_z_dps;
     uint16_t calibration_samples;
     uint32_t timestamp_ms;
+    uint32_t calibration_restart_count;
+    uint32_t read_error_count;
+    uint32_t update_error_count;
+    uint32_t timing_reset_count;
 } icm42688_service_output_t;
 
 typedef struct {
     imu_attitude_t attitude;
     icm42688_service_config_t config;
     imu_attitude_angles_t angles;
+    float accel_norm_g;
+    float gyro_norm_dps;
+    float body_gyro_z_dps;
     volatile uint32_t milliseconds;
     uint32_t last_sample_ms;
+    uint32_t calibration_restart_count;
+    uint32_t read_error_count;
+    uint32_t update_error_count;
+    uint32_t timing_reset_count;
     ml_status_t last_status;
     icm42688_service_state_t state;
     bool initialized;

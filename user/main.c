@@ -1,4 +1,12 @@
-#include "attitude_app.h"
+#ifndef CHASSIS_TRACK_MISSION_BUILD
+#define CHASSIS_TRACK_MISSION_BUILD (0)
+#endif
+
+#if CHASSIS_TRACK_MISSION_BUILD
+#include "chassis_track_app.h"
+#else
+#include "chassis_self_test.h"
+#endif
 #include "ml_system.h"
 
 int main(void)
@@ -9,8 +17,16 @@ int main(void)
     }
 
     __enable_irq();
-    (void) attitude_app_init();
+#if CHASSIS_TRACK_MISSION_BUILD
+    (void) chassis_track_app_init();
+#else
+    (void) chassis_self_test_init();
+#endif
     while (1) {
-        attitude_app_poll();
+#if CHASSIS_TRACK_MISSION_BUILD
+        chassis_track_app_poll();
+#else
+        chassis_self_test_poll();
+#endif
     }
 }

@@ -431,36 +431,6 @@
               <FilePath>..\code\motor_velocity.h</FilePath>
             </File>
             <File>
-              <FileName>robot_config.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\code\robot_config.c</FilePath>
-            </File>
-            <File>
-              <FileName>robot_config.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\code\robot_config.h</FilePath>
-            </File>
-            <File>
-              <FileName>hmi_control.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\code\hmi_control.c</FilePath>
-            </File>
-            <File>
-              <FileName>hmi_control.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\code\hmi_control.h</FilePath>
-            </File>
-            <File>
-              <FileName>vision.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\code\vision.c</FilePath>
-            </File>
-            <File>
-              <FileName>vision.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\code\vision.h</FilePath>
-            </File>
-            <File>
               <FileName>line_sensor.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\code\line_sensor.c</FilePath>
@@ -471,64 +441,144 @@
               <FilePath>..\code\line_sensor.h</FilePath>
             </File>
             <File>
-              <FileName>motion_control.c</FileName>
+              <FileName>chassis_track_mission.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\code\motion_control.c</FilePath>
+              <FilePath>..\code\chassis_track_mission.c</FilePath>
             </File>
             <File>
-              <FileName>motion_control.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\code\motion_control.h</FilePath>
-            </File>
-            <File>
-              <FileName>motion_engine.c</FileName>
+              <FileName>chassis_track_line_control.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\code\motion_engine.c</FilePath>
+              <FilePath>..\code\chassis_track_line_control.c</FilePath>
             </File>
             <File>
-              <FileName>motion_engine.h</FileName>
+              <FileName>chassis_track_line_control.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\code\motion_engine.h</FilePath>
+              <FilePath>..\code\chassis_track_line_control.h</FilePath>
             </File>
             <File>
-              <FileName>robot_mission.c</FileName>
+              <FileName>chassis_track_line_test.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\code\robot_mission.c</FilePath>
+              <FilePath>..\code\chassis_track_line_test.c</FilePath>
             </File>
             <File>
-              <FileName>robot_mission.h</FileName>
+              <FileName>chassis_track_line_test.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\code\robot_mission.h</FilePath>
+              <FilePath>..\code\chassis_track_line_test.h</FilePath>
             </File>
             <File>
-              <FileName>mission_sequence.c</FileName>
+              <FileName>chassis_track_mission.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\chassis_track_mission.h</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_track_app.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\code\mission_sequence.c</FilePath>
+              <FilePath>..\code\chassis_track_app.c</FilePath>
             </File>
             <File>
-              <FileName>mission_sequence.h</FileName>
+              <FileName>chassis_track_app.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\code\mission_sequence.h</FilePath>
+              <FilePath>..\code\chassis_track_app.h</FilePath>
             </File>
             <File>
-              <FileName>robot_input.c</FileName>
+              <FileName>chassis_config.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\code\robot_input.c</FilePath>
+              <FilePath>..\code\chassis_config.c</FilePath>
             </File>
             <File>
-              <FileName>robot_input.h</FileName>
+              <FileName>chassis_config.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\code\robot_input.h</FilePath>
+              <FilePath>..\code\chassis_config.h</FilePath>
             </File>
             <File>
-              <FileName>mission_view.c</FileName>
+              <FileName>chassis_odometry.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\code\mission_view.c</FilePath>
+              <FilePath>..\code\chassis_odometry.c</FilePath>
             </File>
             <File>
-              <FileName>mission_view.h</FileName>
+              <FileName>chassis_odometry.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\code\mission_view.h</FilePath>
+              <FilePath>..\code\chassis_odometry.h</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_heading_fusion.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\chassis_heading_fusion.c</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_heading_fusion.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\chassis_heading_fusion.h</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_motion.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\chassis_motion.c</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_motion.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\chassis_motion.h</FilePath>
+            </File>
+            <File>
+              <FileName>chassis.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\chassis.c</FilePath>
+            </File>
+            <File>
+              <FileName>chassis.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\chassis.h</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_telemetry.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\chassis_telemetry.c</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_telemetry.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\chassis_telemetry.h</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_telemetry_uart.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\chassis_telemetry_uart.c</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_telemetry_uart.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\chassis_telemetry_uart.h</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_self_test.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\chassis_self_test.c</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_key.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\chassis_key.c</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_key.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\chassis_key.h</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_self_test.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\chassis_self_test.h</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_self_test_view.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\chassis_self_test_view.c</FilePath>
+            </File>
+            <File>
+              <FileName>chassis_self_test_view.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\chassis_self_test_view.h</FilePath>
             </File>
             <File>
               <FileName>imu_attitude.c</FileName>
@@ -549,26 +599,6 @@
               <FileName>icm42688_service.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\code\icm42688_service.h</FilePath>
-            </File>
-            <File>
-              <FileName>attitude_view.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\code\attitude_view.c</FilePath>
-            </File>
-            <File>
-              <FileName>attitude_view.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\code\attitude_view.h</FilePath>
-            </File>
-            <File>
-              <FileName>attitude_app.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\code\attitude_app.c</FilePath>
-            </File>
-            <File>
-              <FileName>attitude_app.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\code\attitude_app.h</FilePath>
             </File>
           </Files>
         </Group>
@@ -681,26 +711,6 @@
               <FilePath>..\ml_libs\ml_i2c.h</FilePath>
             </File>
             <File>
-              <FileName>ml_mpu6050.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\ml_libs\ml_mpu6050.c</FilePath>
-            </File>
-            <File>
-              <FileName>ml_mpu6050.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\ml_libs\ml_mpu6050.h</FilePath>
-            </File>
-            <File>
-              <FileName>ml_bmi088.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\ml_libs\ml_bmi088.c</FilePath>
-            </File>
-            <File>
-              <FileName>ml_bmi088.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\ml_libs\ml_bmi088.h</FilePath>
-            </File>
-            <File>
               <FileName>icm42688.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\ml_libs\icm42688.c</FilePath>
@@ -749,6 +759,16 @@
               <FileName>ml_motor_driver.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\ml_libs\ml_motor_driver.h</FilePath>
+            </File>
+            <File>
+              <FileName>ml_quadrature.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\ml_libs\ml_quadrature.c</FilePath>
+            </File>
+            <File>
+              <FileName>ml_quadrature.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\ml_libs\ml_quadrature.h</FilePath>
             </File>
             <File>
               <FileName>ml_encoder.c</FileName>

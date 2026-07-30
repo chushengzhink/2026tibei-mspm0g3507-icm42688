@@ -127,23 +127,43 @@
 #define ML_IMU_INT_T_PIN                 DL_GPIO_PIN_23
 #define ML_IMU_INT_T_IOMUX               IOMUX_PINCM53
 
-/* Keys connect to GND and must be configured as pull-up, active-low inputs. */
+/*
+ * Raw SW6 channels in PCB connection order.  Their mechanical actions are
+ * intentionally not named until the five-way switch is measured.
+ */
+#define ML_SW6_CHANNEL_1_PORT            GPIOA
+#define ML_SW6_CHANNEL_1_PIN             DL_GPIO_PIN_14
+#define ML_SW6_CHANNEL_1_IOMUX           IOMUX_PINCM36
+#define ML_SW6_CHANNEL_2_PORT            GPIOA
+#define ML_SW6_CHANNEL_2_PIN             DL_GPIO_PIN_15
+#define ML_SW6_CHANNEL_2_IOMUX           IOMUX_PINCM37
+#define ML_SW6_CHANNEL_3_PORT            GPIOA
+#define ML_SW6_CHANNEL_3_PIN             DL_GPIO_PIN_24
+#define ML_SW6_CHANNEL_3_IOMUX           IOMUX_PINCM54
+#define ML_SW6_CHANNEL_4_PORT            GPIOB
+#define ML_SW6_CHANNEL_4_PIN             DL_GPIO_PIN_24
+#define ML_SW6_CHANNEL_4_IOMUX           IOMUX_PINCM52
+#define ML_SW6_CHANNEL_5_PORT            GPIOB
+#define ML_SW6_CHANNEL_5_PIN             DL_GPIO_PIN_25
+#define ML_SW6_CHANNEL_5_IOMUX           IOMUX_PINCM56
+
+/* Logical actions verified on the assembled PCB on 2026-07-28. */
 #define ML_KEY_ACTIVE_LEVEL              (0U)
-#define ML_KEY_UP_PORT                   GPIOA
-#define ML_KEY_UP_PIN                    DL_GPIO_PIN_14
-#define ML_KEY_UP_IOMUX                  IOMUX_PINCM36
-#define ML_KEY_DOWN_PORT                 GPIOA
-#define ML_KEY_DOWN_PIN                  DL_GPIO_PIN_24
-#define ML_KEY_DOWN_IOMUX                IOMUX_PINCM54
-#define ML_KEY_LEFT_PORT                 GPIOA
-#define ML_KEY_LEFT_PIN                  DL_GPIO_PIN_15
-#define ML_KEY_LEFT_IOMUX                IOMUX_PINCM37
-#define ML_KEY_RIGHT_PORT                GPIOB
-#define ML_KEY_RIGHT_PIN                 DL_GPIO_PIN_25
-#define ML_KEY_RIGHT_IOMUX               IOMUX_PINCM56
-#define ML_KEY_CENTER_PORT               GPIOB
-#define ML_KEY_CENTER_PIN                DL_GPIO_PIN_24
-#define ML_KEY_CENTER_IOMUX              IOMUX_PINCM52
+#define ML_KEY_UP_PORT                   ML_SW6_CHANNEL_1_PORT
+#define ML_KEY_UP_PIN                    ML_SW6_CHANNEL_1_PIN
+#define ML_KEY_UP_IOMUX                  ML_SW6_CHANNEL_1_IOMUX
+#define ML_KEY_DOWN_PORT                 ML_SW6_CHANNEL_3_PORT
+#define ML_KEY_DOWN_PIN                  ML_SW6_CHANNEL_3_PIN
+#define ML_KEY_DOWN_IOMUX                ML_SW6_CHANNEL_3_IOMUX
+#define ML_KEY_LEFT_PORT                 ML_SW6_CHANNEL_2_PORT
+#define ML_KEY_LEFT_PIN                  ML_SW6_CHANNEL_2_PIN
+#define ML_KEY_LEFT_IOMUX                ML_SW6_CHANNEL_2_IOMUX
+#define ML_KEY_RIGHT_PORT                ML_SW6_CHANNEL_5_PORT
+#define ML_KEY_RIGHT_PIN                 ML_SW6_CHANNEL_5_PIN
+#define ML_KEY_RIGHT_IOMUX               ML_SW6_CHANNEL_5_IOMUX
+#define ML_KEY_CENTER_PORT               ML_SW6_CHANNEL_4_PORT
+#define ML_KEY_CENTER_PIN                ML_SW6_CHANNEL_4_PIN
+#define ML_KEY_CENTER_IOMUX              ML_SW6_CHANNEL_4_IOMUX
 
 #define ML_BUZZER_PORT                   GPIOA
 #define ML_BUZZER_PIN                    DL_GPIO_PIN_21
@@ -175,13 +195,13 @@
 #define ML_C3_PORT                       GPIOB
 #define ML_C3_PIN                        DL_GPIO_PIN_8
 #define ML_C3_IOMUX                      IOMUX_PINCM25
-#define ML_C8_PORT                       GPIOB
-#define ML_C8_PIN                        DL_GPIO_PIN_10
-#define ML_C8_IOMUX                      IOMUX_PINCM27
+#define ML_C8_PORT                       GPIOA
+#define ML_C8_PIN                        DL_GPIO_PIN_27
+#define ML_C8_IOMUX                      IOMUX_PINCM60
 
 #define ML_MOTOR_PWM_FREQUENCY_HZ        (1000U)
 #define ML_PWM_DUTY_MAX                  (50000UL)
-#define ML_MOTOR_DUTY_LIMIT              (17500UL) /* 35% safety cap */
+#define ML_MOTOR_DUTY_LIMIT              (20000UL) /* 40% absolute cap */
 #define ML_PWM_TIMG0_CH0_PORT            GPIOA
 #define ML_PWM_TIMG0_CH0_PIN             DL_GPIO_PIN_12
 #define ML_PWM_TIMG0_CH0_IOMUX           IOMUX_PINCM34

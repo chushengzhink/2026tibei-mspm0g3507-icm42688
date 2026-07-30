@@ -1,0 +1,22 @@
+#ifndef ML_GPIO_H
+#define ML_GPIO_H
+
+#include "ml_board.h"
+
+typedef enum {
+    OUT = 0,
+    IN_UP,
+    IN_DOWN,
+    IN_FLOAT
+} GPIO_Mode_enum;
+
+typedef uint32_t GPIOn_enum;
+
+ml_status_t gpio_init(
+    GPIO_Regs *gpio, uint32_t pins, GPIOn_enum gpion,
+    GPIO_Mode_enum mode);
+void gpio_set(GPIO_Regs *gpio, uint32_t pins, uint8_t status);
+void gpio_toggle(GPIO_Regs *gpio, uint32_t pins);
+uint8_t gpio_get(GPIO_Regs *gpio, uint32_t pins);
+
+#endif

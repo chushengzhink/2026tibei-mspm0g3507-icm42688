@@ -164,6 +164,62 @@ ml_status_t OLED_ShowString(
     return ML_STATUS_OK;
 }
 
+ml_status_t OLED_ShowLine(uint8_t line, const char *string)
+{
+    uint8_t upper[OLED_WIDTH];
+    uint8_t lower[OLED_WIDTH];
+    uint8_t characters[OLED_TEXT_COLUMN_COUNT];
+    uint8_t column;
+    uint8_t pixel;
+    bool padding = false;
+    ml_status_t status;
+
+    if ((line == 0U) || (line > OLED_TEXT_LINE_COUNT) ||
+        (string == 0)) {
+        return ML_STATUS_INVALID_ARGUMENT;
+    }
+    for (column = 0U; column < OLED_TEXT_COLUMN_COUNT; ++column) {
+        uint8_t character;
+
+        if (!padding && (string[column] == '\0')) {
+            padding = true;
+        }
+        character = padding ? (uint8_t) ' ' : (uint8_t) string[column];
+        if ((character < (uint8_t) ' ') ||
+            (character > (uint8_t) '~')) {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        characters[column] = character;
+    }
+    if (!padding && (string[OLED_TEXT_COLUMN_COUNT] != '\0')) {
+        return ML_STATUS_INVALID_ARGUMENT;
+    }
+
+    for (column = 0U; column < OLED_TEXT_COLUMN_COUNT; ++column) {
+        uint8_t glyph = characters[column] - (uint8_t) ' ';
+
+        for (pixel = 0U; pixel < 8U; ++pixel) {
+            uint8_t offset = (uint8_t) ((column * 8U) + pixel);
+
+            upper[offset] = OLED_F8x16[glyph][pixel];
+            lower[offset] = OLED_F8x16[glyph][pixel + 8U];
+        }
+    }
+
+    status = OLED_SetCursor((uint8_t) ((line - 1U) * 2U), 0U);
+    if (status == ML_STATUS_OK) {
+        status = oled_write_payload(0x40U, upper, sizeof(upper));
+    }
+    if (status == ML_STATUS_OK) {
+        status = OLED_SetCursor(
+            (uint8_t) (((line - 1U) * 2U) + 1U), 0U);
+    }
+    if (status == ML_STATUS_OK) {
+        status = oled_write_payload(0x40U, lower, sizeof(lower));
+    }
+    return status;
+}
+
 ml_status_t OLED_ShowNum(
     uint8_t line, uint8_t column, uint32_t number, uint8_t length)
 {

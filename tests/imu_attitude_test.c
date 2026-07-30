@@ -44,6 +44,7 @@ static void test_bias_and_yaw(void)
     imu_attitude_t attitude;
     imu_attitude_angles_t angles = {0.0f, 0.0f, 0.0f};
     float bias[3];
+    float body_gyro[3];
     uint16_t index;
 
     test_check(imu_attitude_init(&attitude, 0) == ML_STATUS_OK,
@@ -76,6 +77,10 @@ static void test_bias_and_yaw(void)
     test_check(test_near(
         angles.yaw_deg, 90.0f, TEST_TOLERANCE_ANGLE_DEG),
         "90 dps for one second produces 90 degree relative yaw");
+    test_check(imu_attitude_get_body_gyro_dps(&attitude,
+        body_gyro) == ML_STATUS_OK &&
+        test_near(body_gyro[2], 90.0f, TEST_TOLERANCE_BIAS_DPS),
+        "bias-corrected mapped body gyro rate is exposed");
 }
 
 static void test_tilt_initialisation(void)
@@ -154,15 +159,18 @@ static void test_movement_and_invalid_inputs(void)
 static void test_axis_mapping(void)
 {
     const imu_attitude_config_t mapping = {
-        {IMU_ATTITUDE_AXIS_Y, IMU_ATTITUDE_AXIS_X, IMU_ATTITUDE_AXIS_Z},
-        {1, 1, -1}
+        {IMU_ATTITUDE_AXIS_X, IMU_ATTITUDE_AXIS_Y, IMU_ATTITUDE_AXIS_Z},
+        {-1, 1, -1}
     };
     const icm42688_data_t sample = {
         0.0f, 0.0f, -1.0f,
         0.0f, 0.0f, 0.0f
     };
+    icm42688_data_t rotating = sample;
     imu_attitude_t attitude;
     imu_attitude_angles_t angles;
+    float body_gyro[3];
+    uint16_t index;
 
     test_check(imu_attitude_init(&attitude, &mapping) == ML_STATUS_OK,
         "axis permutation is accepted");
@@ -176,6 +184,34 @@ static void test_axis_mapping(void)
         TEST_TOLERANCE_ANGLE_DEG) &&
         test_near(angles.roll_deg, 0.0f, TEST_TOLERANCE_ANGLE_DEG),
         "installed sensor mapping converts downward sensor Z to body Z");
+
+    rotating.gyro_z_dps = -90.0f;
+    for (index = 0U; index < 100U; ++index) {
+        test_check(imu_attitude_update(
+            &attitude, &rotating, 0.01f, &angles) == ML_STATUS_OK,
+            "mapped counter-clockwise yaw update succeeds");
+    }
+    test_check(test_near(
+        angles.yaw_deg, 90.0f, TEST_TOLERANCE_ANGLE_DEG),
+        "counter-clockwise chassis rotation produces positive yaw");
+    test_check(imu_attitude_get_body_gyro_dps(&attitude,
+        body_gyro) == ML_STATUS_OK &&
+        test_near(body_gyro[2], 90.0f, TEST_TOLERANCE_BIAS_DPS),
+        "installed mapping exposes positive body Z gyro rate");
+
+    test_check(imu_attitude_init(&attitude, &mapping) == ML_STATUS_OK &&
+        test_calibrate(&attitude, &sample) ==
+            IMU_ATTITUDE_CALIBRATION_COMPLETE,
+        "mapped clockwise yaw test recalibrates");
+    rotating.gyro_z_dps = 90.0f;
+    for (index = 0U; index < 100U; ++index) {
+        test_check(imu_attitude_update(
+            &attitude, &rotating, 0.01f, &angles) == ML_STATUS_OK,
+            "mapped clockwise yaw update succeeds");
+    }
+    test_check(test_near(
+        angles.yaw_deg, -90.0f, TEST_TOLERANCE_ANGLE_DEG),
+        "clockwise chassis rotation produces negative yaw");
 }
 
 int main(void)

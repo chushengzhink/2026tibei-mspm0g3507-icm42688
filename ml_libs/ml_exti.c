@@ -89,7 +89,7 @@ ml_status_t exti_init_ex(EXTI_GPIO_enum exti_gpio, EXTI_MODE_enum mode,
     uint32_t pin_mask;
     ml_status_t status;
 
-    if (((mode != RISING) && (mode != FALLING)) ||
+    if (((mode != RISING) && (mode != FALLING) && (mode != BOTH)) ||
         (priority > ML_NVIC_PRIORITY_MAX)) {
         return ML_STATUS_INVALID_ARGUMENT;
     }
@@ -106,20 +106,24 @@ ml_status_t exti_init_ex(EXTI_GPIO_enum exti_gpio, EXTI_MODE_enum mode,
     DL_GPIO_initDigitalInputFeatures((uint32_t) iomux,
         DL_GPIO_INVERSION_DISABLE,
         (mode == RISING) ? DL_GPIO_RESISTOR_PULL_DOWN : DL_GPIO_RESISTOR_PULL_UP,
-        DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+        (mode == BOTH) ? DL_GPIO_HYSTERESIS_ENABLE :
+            DL_GPIO_HYSTERESIS_DISABLE,
+        DL_GPIO_WAKEUP_DISABLE);
 
     if (pin_number < 16U) {
         local_pin = pin_number;
         polarity_mask = UINT32_C(3) << (2U * local_pin);
-        polarity = UINT32_C(1) <<
-            ((2U * local_pin) + ((mode == FALLING) ? 1U : 0U));
+        polarity = (mode == BOTH) ? polarity_mask :
+            (UINT32_C(1) <<
+             ((2U * local_pin) + ((mode == FALLING) ? 1U : 0U)));
         port->POLARITY15_0 =
             (port->POLARITY15_0 & ~polarity_mask) | polarity;
     } else {
         local_pin = pin_number - 16U;
         polarity_mask = UINT32_C(3) << (2U * local_pin);
-        polarity = UINT32_C(1) <<
-            ((2U * local_pin) + ((mode == FALLING) ? 1U : 0U));
+        polarity = (mode == BOTH) ? polarity_mask :
+            (UINT32_C(1) <<
+             ((2U * local_pin) + ((mode == FALLING) ? 1U : 0U)));
         port->POLARITY31_16 =
             (port->POLARITY31_16 & ~polarity_mask) | polarity;
     }

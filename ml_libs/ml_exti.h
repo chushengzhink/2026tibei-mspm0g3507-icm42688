@@ -5,7 +5,8 @@
 
 typedef enum {
     RISING = 0,
-    FALLING
+    FALLING,
+    BOTH
 } EXTI_MODE_enum;
 
 /* Values 0-27 encode GPIOA; values 32-59 encode GPIOB. */

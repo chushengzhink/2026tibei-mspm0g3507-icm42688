@@ -75,22 +75,41 @@ static void test_pid(void)
 static void test_velocity(void)
 {
     const motor_velocity_config_t config = {
-        100.0f, 0.0f, 0.0f, 1000.0f, 5000.0f, 2500.0f
+        {100.0f, 0.0f, 0.0f, 1000.0f, 5000.0f, 2500.0f},
+        {80.0f, 0.0f, 0.0f, 900.0f, 4500.0f, 2000.0f},
+        0.35f
     };
     motor_velocity_config_t invalid = config;
+    motor_velocity_measurement_t measurement;
 
-    invalid.output_limit = 18000.0f;
+    invalid.motor_a.output_limit = 20001.0f;
     check(motor_velocity_init(&invalid) == ML_STATUS_INVALID_ARGUMENT,
         "velocity control rejects limits above the motor safety cap");
     check(motor_velocity_init(&config) == ML_STATUS_OK,
         "velocity control initializes");
-    check(motor_velocity_update(10.0f, 10.0f, 0, 0, 1, -1) ==
-        ML_STATUS_OK && g_duty[0] > 0 && g_duty[1] < 0,
-        "velocity update applies feedforward and motor polarity");
-    check(motor_velocity_update(0.0f, 0.0f, 5, -5, 1, 1) ==
-        ML_STATUS_OK && g_duty[0] == 0 && g_duty[1] == 0,
-        "zero targets reset controllers and stop both motors");
-    check(motor_velocity_update(NAN, 0.0f, 0, 0, 1, 1) ==
+    check(motor_velocity_update(10.0f, 10.0f, 0.0f, 0.0f, 1, -1) ==
+        ML_STATUS_OK && g_duty[0] > 0 && g_duty[1] < 0 &&
+        motor_velocity_get_measurement(&measurement) == ML_STATUS_OK &&
+        measurement.duty_a_count == (uint16_t) g_duty[0] &&
+        measurement.duty_b_count == (uint16_t) -g_duty[1],
+        "velocity update reports absolute applied duty after polarity");
+    check(motor_velocity_update(10.0f, 10.0f, 10.0f, -10.0f, 1, 1) ==
+        ML_STATUS_OK &&
+        motor_velocity_get_measurement(&measurement) == ML_STATUS_OK &&
+        fabsf(measurement.filtered_a_ticks - 3.5f) < 0.001f &&
+        fabsf(measurement.filtered_b_ticks + 3.5f) < 0.001f,
+        "velocity measurement applies independent 0.35 low-pass filters");
+    motorA.iout = 100.0f;
+    check(motor_velocity_update(-10.0f, 10.0f, 0.0f, 0.0f, 1, 1) ==
+        ML_STATUS_OK && motorA.iout <= 0.0f,
+        "wheel direction reversal clears the corresponding PID state");
+    check(motor_velocity_update(0.0f, 0.0f, 5.0f, -5.0f, 1, 1) ==
+        ML_STATUS_OK && g_duty[0] == 0 && g_duty[1] == 0 &&
+        motor_velocity_get_measurement(&measurement) == ML_STATUS_OK &&
+        measurement.duty_a_count == 0U &&
+        measurement.duty_b_count == 0U,
+        "zero targets reset controllers and reported duty");
+    check(motor_velocity_update(NAN, 0.0f, 0.0f, 0.0f, 1, 1) ==
         ML_STATUS_INVALID_ARGUMENT && g_duty[0] == 0 && g_duty[1] == 0,
         "invalid targets fail safe");
     check(motor_velocity_reset() == ML_STATUS_OK,
@@ -103,10 +122,36 @@ static void test_velocity(void)
         "legacy PID control wrapper remains operational");
 }
 
+static void test_self_test_and_race_limits(void)
+{
+    const motor_velocity_config_t self_test = {
+        {700.0f, 0.0f, 0.0f, 6000.0f, 11500.0f, 5750.0f},
+        {700.0f, 0.0f, 0.0f, 6000.0f, 11500.0f, 5750.0f},
+        1.0f
+    };
+    const motor_velocity_config_t race = {
+        {700.0f, 0.0f, 0.0f, 6000.0f, 14000.0f, 7000.0f},
+        {700.0f, 0.0f, 0.0f, 6000.0f, 14000.0f, 7000.0f},
+        1.0f
+    };
+
+    (void) motor_velocity_init(&self_test);
+    (void) motor_velocity_update(1000.0f, 1000.0f,
+        0.0f, 0.0f, 1, 1);
+    check(g_duty[0] == 17500 && g_duty[1] == 17500,
+        "default self-test PID plus feedforward remains at 35 percent");
+    (void) motor_velocity_init(&race);
+    (void) motor_velocity_update(1000.0f, 1000.0f,
+        0.0f, 0.0f, 1, 1);
+    check(g_duty[0] == 20000 && g_duty[1] == 20000,
+        "race PID plus feedforward reaches but cannot exceed 40 percent");
+}
+
 int main(void)
 {
     test_pid();
     test_velocity();
+    test_self_test_and_race_limits();
     if (g_failures == 0) {
         printf("PASS: pid and motor velocity tests\n");
     }

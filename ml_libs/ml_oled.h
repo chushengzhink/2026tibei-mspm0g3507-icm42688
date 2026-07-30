@@ -19,6 +19,7 @@ ml_status_t OLED_SetCursor(uint8_t page, uint8_t x);
 ml_status_t OLED_ShowChar(uint8_t line, uint8_t column, char character);
 ml_status_t OLED_ShowString(
     uint8_t line, uint8_t column, const char *string);
+ml_status_t OLED_ShowLine(uint8_t line, const char *string);
 ml_status_t OLED_ShowNum(
     uint8_t line, uint8_t column, uint32_t number, uint8_t length);
 ml_status_t OLED_ShowSignedNum(

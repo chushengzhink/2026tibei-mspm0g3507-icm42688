@@ -55,14 +55,17 @@ ml_status_t gpio_init(
         gpio_set(gpio, pins, 0U);
         DL_GPIO_enableOutput(gpio, pins);
     } else if (mode == IN_DOWN) {
+        DL_GPIO_disableOutput(gpio, pins);
         DL_GPIO_initDigitalInputFeatures((uint32_t) gpion,
             DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
             DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
     } else if (mode == IN_UP) {
+        DL_GPIO_disableOutput(gpio, pins);
         DL_GPIO_initDigitalInputFeatures((uint32_t) gpion,
             DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
             DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
     } else if (mode == IN_FLOAT) {
+        DL_GPIO_disableOutput(gpio, pins);
         DL_GPIO_initDigitalInputFeatures((uint32_t) gpion,
             DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
             DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);

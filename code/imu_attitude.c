@@ -96,6 +96,7 @@ static void imu_attitude_reset_calibration(imu_attitude_t *context)
     context->calibrated = false;
     for (axis = 0U; axis < 3U; ++axis) {
         context->gyro_bias_dps[axis] = 0.0f;
+        context->last_gyro_dps[axis] = 0.0f;
         context->gyro_mean_dps[axis] = 0.0f;
         context->gyro_m2[axis] = 0.0f;
         context->accel_sum_g[axis] = 0.0f;
@@ -305,6 +306,9 @@ ml_status_t imu_attitude_update(imu_attitude_t *context,
     gyro_dps[0] -= context->gyro_bias_dps[0];
     gyro_dps[1] -= context->gyro_bias_dps[1];
     gyro_dps[2] -= context->gyro_bias_dps[2];
+    context->last_gyro_dps[0] = gyro_dps[0];
+    context->last_gyro_dps[1] = gyro_dps[1];
+    context->last_gyro_dps[2] = gyro_dps[2];
 
     gyroscope.axis.x = gyro_dps[0];
     gyroscope.axis.y = gyro_dps[1];
@@ -358,6 +362,23 @@ ml_status_t imu_attitude_get_gyro_bias(
     }
     for (axis = 0U; axis < 3U; ++axis) {
         bias_dps[axis] = context->gyro_bias_dps[axis];
+    }
+    return ML_STATUS_OK;
+}
+
+ml_status_t imu_attitude_get_body_gyro_dps(
+    const imu_attitude_t *context, float gyro_dps[3])
+{
+    uint8_t axis;
+
+    if ((context == 0) || (gyro_dps == 0)) {
+        return ML_STATUS_INVALID_ARGUMENT;
+    }
+    if (!context->initialized || !context->calibrated) {
+        return ML_STATUS_NOT_INITIALIZED;
+    }
+    for (axis = 0U; axis < 3U; ++axis) {
+        gyro_dps[axis] = context->last_gyro_dps[axis];
     }
     return ML_STATUS_OK;
 }

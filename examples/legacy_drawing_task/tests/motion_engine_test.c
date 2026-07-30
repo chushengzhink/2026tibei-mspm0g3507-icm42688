@@ -21,7 +21,7 @@ static line_sample_t line_sample(
     float error_mm, bool lost, bool transverse, bool centered)
 {
     line_sample_t line = {0U, 0U, 0U, error_mm,
-        lost, transverse, centered};
+        lost, transverse, centered, false};
     return line;
 }
 

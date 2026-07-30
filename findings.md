@@ -1,0 +1,102 @@
+# Findings & Decisions
+
+## Requirements
+- Confirmed physical LF04 order is PA31, PA12, PB8, PA27 from left to right, encoded as B1/B2/B4/B8.
+- Right-outer LF04 is physically PA27 and must be GPIO input with pull-up.
+- Race line assist uses four digital sensors and remains bounded by 500 mm/s wheel targets.
+- UART0 at 115200 8N1 exports a standard CSV on single-byte `D`; `C` clears only while stopped.
+- CSV must include elapsed/lap time, target/actual center speed, left/right PWM, and line bits.
+- Braking samples must remain in RAM until the three-cycle stopped criterion completes.
+
+## Research Findings
+- MSPM0G3507 PA27 is `IOMUX_PINCM60`; GPIO function is `IOMUX_PINCM60_PF_GPIOA_DIO27`.
+- PA27 has alternate RTC/SPI/TIMG8/CAN functions, but `gpio_init(..., PA27, IN_UP)` explicitly selects GPIO input.
+- Current race configuration already reaches the 20000/50000 hard cap through 14000 PID + 6000 feedforward.
+- Previous telemetry was 32 bytes x 600 and stopped when `chassis_stop()` cancelled the running result.
+- Current mission already measures key-edge-to-three-stopped-cycles elapsed time and displays it on OLED.
+- Baseline host tests were 14/14 passing before implementation.
+- `chassis_stop()` resets the velocity controller and disables idle capture, so the race app must stop once, then explicitly start idle capture while the mission waits for three stopped cycles.
+- `line_follow_update()` already yields physical wheel-space bias (`left += correction`, `right -= correction`); a small race-specific state wrapper is needed for B0 timing, speed recovery, B6/B15 zeroing, and wheel headroom.
+- `motor_velocity_measurement_t` is stubbed only by the idle-capture host test, so adding PWM fields has a contained compatibility surface.
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| Reuse line centroid and line_follow PD | Minimum change; existing module already implements weighted digital error and bounded correction |
+| Combine line correction in wheel-speed space | Makes left/right steering intent explicit and allows dynamic wheel headroom limiting |
+| Extend telemetry record to 40 bytes | Adds required diagnostics while retaining 600 samples; both ARM links fit and report 0 errors/warnings |
+| Record absolute PWM magnitudes | Directly shows saturation despite opposite motor polarity signs |
+| Add a focused `chassis_track_line_assist` module | Keeps stateful B0 recovery testable without coupling generic `line_follow` to one competition task |
+| Require both wheel speeds below 20 mm/s | Matches the stated three-cycle stop gate; an average-speed test could finish while one wheel was still too fast |
+
+## Verification Findings
+- The extended empty CSV header is exactly 228 bytes including CRLF and contains 17 columns.
+- Host coverage passes all 17 cases, including stage 0/1/2 compile variants and all B0-B15 sensor patterns.
+- Default `project.uvprojx` and race `project_track.uvprojx` both link with `0 Error(s), 0 Warning(s)`.
+- Final safety constants remain 6000 feedforward, 14000 race PID limit, and 20000 absolute duty cap; default self-test remains 11500 + 6000.
+
+## LF04 Runtime Low-Level Investigation
+- `gpio_init(..., IN_UP)` selected pull-up input but did not explicitly clear the GPIO DOE bit; DriverLib PINCM input configuration alone does not clear `GPIOx->DOE31_0`.
+- The READY-to-RUN path contains no intentional LF04 pull-down or output configuration, and motor PWM uses PA28/PB20 rather than PA31/PA12/PB8/PA27.
+- With 12 V disconnected, LF04 LEDs returned to normal when the race fault stopped PWM activity. Software protection will therefore explicitly clear DOE and reassert the four inputs at every sample before hardware investigation.
+- `TRACK HW FAULT 05` with 12 V disconnected is a secondary `BUSY` result overwriting the underlying no-encoder/stall fault; fault ordering must be corrected.
+
+## LF04 Runtime Protection Verification
+- All GPIO input modes now clear DOE before applying input features; the production implementation is covered directly by a host test.
+- Every LF04 read visits all four PA31/PA12/PB8/PA27 pull-up configurations, even when one call fails, and reports `io_fault` instead of a false `B15`.
+- The final race Rebuild after these changes reports `Code=36772`, `0 Error(s), 0 Warning(s)`; the default-project final regression Rebuild remains pending.
+
+## LF04 White-Baseline Regression
+- Hardware reported white raw `RF` but stored baseline `W7`; therefore white normalized to `B8`.
+- The observed left-to-right patterns are exact consequences of the bad baseline: `E^7=B9`, `D^7=BA`, `B^7=BC`, `7^7=B0`.
+- This proves PA31/PA12/PB8/PA27 bit weights remain correct; the fix must remove adaptive polarity capture and gate READY on stable `RF`.
+- Final verification is `18/18` host tests plus race/default Keil Rebuilds at `0 Error(s), 0 Warning(s)`; race/default code sizes are 36840/34324 bytes.
+
+## Resources
+- `code/chassis_track_app.c`, `code/chassis_track_mission.*`
+- `code/line_sensor.*`, `code/line_follow.*`
+- `code/chassis_telemetry.*`, `code/chassis.c`, `code/motor_velocity.*`
+- `ml_libs/ml_board.h`, MSPM0G3507 device header
+
+## Official Track Geometry and Failed-Lap Evidence
+- The official H-problem PDF specifies a 16-20 mm black loop, 1500 mm straights, R500 semicircles, and a 50 mm long perpendicular A-line with the same width.
+- The fixed LF04 centers are -40.25/-7.25/+7.25/+40.25 mm. The 33 mm inner-to-outer gaps create unavoidable 13-17 mm B0 blind zones, while a centered loop line covers the two inner sensors as B6.
+- With the fixed 80.5 mm sensor span, the 50 mm A-line should not produce B15; normal race-usable patterns are B1/B2/B4/B6/B8.
+- The uploaded race CSV contains 275 records: B0=181, B15=39, B9=16, plus B11/B13. Only about 32 nonzero samples are normal usable patterns.
+- The lap completed in 27.34 s because line recovery held 200 mm/s for most of the route. Braking began near 200 mm/s and stopped about 41 mm beyond the encoder route, so the current run cannot calibrate the 100 mm/s stop lead.
+- Telemetry wraps encoder/fused headings to +/-180 degrees and appends two different records at timestamp 62620; both are CSV representation defects, not fusion-state defects.
+
+## Phase 8 Implementation Verification
+- The race assist now accepts only B1/B2/B4/B6/B8, bridges B0 with a slew-limited remembered side, and latches the fifth consecutive impossible pattern.
+- Remaining-distance speed limiting reaches the 100 mm/s final request before the dual gate; the assist layer treats the mission request as a hard upper bound.
+- Telemetry is 44 bytes per record and exports 20 columns. Encoder/fused headings remain cumulative, duplicate timestamps coalesce, and the final zero-PWM snapshot replaces rather than duplicates the same timestamp.
+- All 18 host groups pass. Both μVision projects are open interactively, so Phase 8 full Rebuild must be performed in those existing windows instead of starting another UV4 process.
+
+## LF04-Only Diagnostic Evidence
+- The latest 60-row CSV has only 8 samples accepted as usable, 40 B0 samples, and 10 impossible-pattern samples; fused heading rises from 0.02° to 29.05° in 5.84 s.
+- A B4 sample immediately precedes the long B0 interval, so remembered-side recovery keeps commanding the same yaw direction and explains the large physical deviation.
+- `CHASSIS_MODE_VELOCITY` always applies fused yaw-rate feedback when fusion is active. A true LF04-only steering test must use `CHASSIS_MODE_WHEEL_SPEED`; IMU may still be updated and recorded.
+- The selected diagnostic workflow is boot-held Up, stopped-only 60/120/200 selection, 1000 mm automatic stop, and a 500 ms sustained-B0 lock-stop.
+- The diagnostic controller will be a small host-testable state machine: three stopped-only speed levels, three-sample B6 start gate, 400 mm/s² distance-based speed profile, 1000 mm braking transition, three stopped cycles, and a 500 ms line-loss latch.
+- Normal completion remains non-latched so another speed can be selected after CSV export and repositioning; B0 timeout, impossible pattern, GPIO, chassis, and Center-key faults remain emergency-latched.
+- The existing line-assist already gives the required 8 mm/s-per-cycle correction slew and five-cycle impossible-pattern latch. In LF-only mode its left/right outputs can be sent directly through `CHASSIS_MODE_WHEEL_SPEED`; the mission heading command must not be called.
+- The repeatable completion path must call `chassis_stop()` only once, start idle telemetry capture, and keep feeding measured wheel speeds into the line-test state machine until both wheels are below 20 mm/s for three cycles.
+- Phase 9 final portable verification is `19/19` host groups. Both new/modified application sources compile directly with ARMCC, both μVision project XML files parse, and whitespace checks pass; only the full Rebuild in the already-open interactive μVision windows remains.
+
+## LF04 Full-Pattern Hardware Correction
+- Hardware confirms that, viewed from the vehicle front toward the rear, PA31/PA12/PB8/PA27 map left-to-right to B1/B2/B4/B8; GPIO order and steering sign are not to be swapped.
+- The observed `LF SIGNAL FAULT` is caused by software rejecting B3/B5/B7/B9/B10/B11/B12/B13/B14 even though the real module can produce every B1-B14 pattern on the track.
+- The selected policy accepts B1-B14 through the existing physical-position centroid, uses a +/-3 mm center deadband and three-cycle side reversal confirmation, and changes the diagnostic start gate to three valid centroid samples within +/-10 mm.
+- B15 is a separate full-black ambiguity: preserve the last correction, ramp to at most 60 mm/s, recover after three valid samples, and latch `LF SIGNAL FAULT` only at 500 ms. B15 must not advance the B0 loss timer.
+
+## Phase 11 User-Confirmed Grouped Control
+- Phase 10 centroid and special-B15 decisions are superseded. The four inputs remain grouped as PA31/PA12 left and PB8/PA27 right.
+- Every B1-B15 sample is valid: left-only group means left wheel slower/right wheel faster, right-only means the reverse, and both groups mean centered.
+- Before Phase 11, production code and tests were reversed: at 120 mm/s a left-group sample expected left=180/right=60; the corrected result is left=93.6/right=146.4 with the new 0.22 P-only correction.
+- Formal race keeps encoder/IMU route and finish logic, but their wheel-space steering bias may only reinforce the infrared direction; opposite assistance is discarded.
+- LF-only mode remains boot-Up selected and direct-wheel controlled, but READY/COMPLETE permits Center start for any B0-B15 pattern.
+- Baseline host suite passes the first ten cases then fails to link the line-control test because its source list omits `code/pid.c`.
+- README, WIRING, ROBOT_SETUP, and the field acceptance checklist still contain the superseded 50%/60 mm/s no-PID behavior and the removed both-groups start gate; all four must be synchronized to avoid unsafe hardware validation.
+- The four operating/acceptance documents are now synchronized: the boot-Up LF-only entry remains, only its pattern gate was removed, and the staged hardware check uses explicit left/right wheel-speed relationships.
+- The complete portable suite now passes 18/18 after adding the missing PID source; `git diff --check` also passes.
+- ARM Compiler 5 is available at `D:\Keil_v5\ARM\ARMCC\bin\armcc.exe`; the race project uses `__MSPM0G3507__`, `CHASSIS_TRACK_MISSION_BUILD=1`, and the user/code/ml_libs/MSPM0 SDK/CMSIS include paths.

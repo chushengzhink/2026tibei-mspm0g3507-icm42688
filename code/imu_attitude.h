@@ -34,6 +34,7 @@ typedef struct {
     FusionAhrs ahrs;
     imu_attitude_config_t config;
     float gyro_bias_dps[3];
+    float last_gyro_dps[3];
     float gyro_mean_dps[3];
     float gyro_m2[3];
     float accel_sum_g[3];
@@ -55,5 +56,7 @@ uint16_t imu_attitude_calibration_progress(
     const imu_attitude_t *context);
 ml_status_t imu_attitude_get_gyro_bias(
     const imu_attitude_t *context, float bias_dps[3]);
+ml_status_t imu_attitude_get_body_gyro_dps(
+    const imu_attitude_t *context, float gyro_dps[3]);
 
 #endif

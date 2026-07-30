@@ -1,153 +1,120 @@
-﻿# 天猛星 MSPM0G3507 激光绘图小车
-本工程面向立创天猛星 TI MSPM0G3507 核心板及配套扩展板，使用 ARM Compiler 5.06 和手动外设初始化。当前固件已经接入 MAIXCAM PRO 数字识别、串口屏按钮启动、LF04 四路红外循迹、双电机编码器闭环、差速绘圆、OLED 状态显示、中键启动/急停和返回停车区；不使用 MPU6050，也不控制外部激光电源。逐脚接线和安全上电顺序见 `WIRING.md`，状态机、标定步骤和故障码见 `ROBOT_SETUP.md`。
+# MSPM0G3507 通用双轮差速底盘模板
 
-> 当前 `user/main.c` 是 ICM42688 姿态解算独立演示入口，不启动小车任务状态机；小车任务模块仍保留在工程中，后续可通过 `icm42688_service.h` 接入，但本次不参与运动控制。
+本工程面向立创·天猛星 MSPM0G3507 开发板、TB6612 双路电机驱动和两只 MG513X 霍尔编码器电机。
 
-## 启动与当前入口
+SW6五向键映射已在实物上确认：上/左/下/中/右依次对应PA14/PA15/PA24/PB24/PB25。默认固件恢复完整底盘自检，任何运动都必须由垂直中键确认；电气检查见 [WIRING.md](WIRING.md)，软件与标定原理见 [ROBOT_SETUP.md](ROBOT_SETUP.md)，现场逐项验收和数据记录使用 [HARDWARE_ACCEPTANCE.md](HARDWARE_ACCEPTANCE.md)。
 
-启动链如下：
+## 默认能力
+
+- 左右编码器均由四根 GPIO 双边沿中断完成软件 4× 解码。
+- 每个车轮使用独立 PID、前馈、轮径标定和方向配置。
+- 20 ms 轮速闭环，计数速度使用系数 0.35 的一阶低通滤波。
+- 编码器低频约束与ICM42688短时角速度互补融合，输出编码器航向、融合航向和融合角速度。
+- 差速中点积分里程计使用融合航向输出 `x_mm`、`y_mm`，同时保留累计距离和累计 tick。
+- 提供轮速、线速度/角速度、定距、原地转向和圆弧非阻塞接口。
+- 定距、转向和圆弧使用加减速轨迹；完成条件需连续三个周期进入 2 mm 或 1°窗口。
+- 8 个控制周期无编码器反馈触发堵转保护，约 160 ms。
+- 电机驱动绝对PWM硬限制为20000/50000，即40%；默认安全自检仍使用`PID 11500 + 前馈6000`，输出不超过原35%。
+- LF04通用读取仍不参与默认自检；独立竞速工程由LF04决定横向转向方向，编码器负责里程/赛段，编码器+IMU融合只提供不能抵消或反转红外方向的辅助修正。
+- 直线、转向、圆弧和速度模式在运动层使用融合航向/角速度纠偏；单轮PID仍只使用编码器。
+- IMU读错或超过100 ms未更新时无跳变退化为编码器航向。
+- 10 Hz RAM遥测可保存600条，每条44字节；记录累计航向、速度、实际PWM和LF04可用/恢复/异常状态，并可在停车后通过UART0导出20列CSV。
+- 断开12 V后可在开机前按住中键进入OLED滚动标定页，无需连接电脑即可读取左右相对tick和BAD增量。
+
+MG513X默认采用13 PPR、1:28减速比、65 mm轮径：
 
 ```text
-Reset_Handler -> ARMCC __main -> main -> system_init
-              -> attitude_app -> ICM42688 service -> attitude loop
-                              -> attitude_view -> OLED
+13 × 28 × 4 = 1456 tick/轮
+π × 65 / 1456 = 0.1402497 mm/tick
 ```
 
-- `system_init()` 复位并使能 GPIOA/GPIOB，使用 SYSOSC 驱动 SYSPLL，将 MCLK 配置为 80 MHz。
-- `main()` 只完成系统初始化、开启中断并轮询 `attitude_app`；应用模块管理 ICM42688 服务事件和刷新节流，`attitude_view` 独立负责 OLED 页面。
-- ICM42688 服务内部管理传感器、姿态算法、TIMG8 毫秒时基与静止校准，完成后持续输出 Pitch/Roll/Yaw。
-- `robot_mission_init()` 及原有小车任务代码仍参与编译，但当前 `main()` 不调用它；恢复任务入口时需自行决定姿态数据如何接入运动控制。
-- LED1 阳极经 1 kΩ 限流电阻连接 3.3 V，阴极连接 PB14，因此 PB14 低电平点亮、高电平熄灭。
-- 核心板 LED 位于 PB22，但 PB22 同时连接 `IMU_MOSI`，因此不作为默认 LED。
-- `ti_msp_dl_config.c/.h` 和 `empty.syscfg` 仅作参考，不参与 Keil 工程编译，也不得与 `system_init()` 混用。
+理论值只用于首次启动。左右轮必须分别按实车滚动距离标定。
 
-## 已接入驱动的引脚
+当前一组正反各1 m滚动样本得到暂定值：左轮 `0.1413727 mm/tick`，右轮 `0.1434926 mm/tick`。它们已写入默认配置，但仍需通过500 mm/1 m实车回归确认最终距离精度。
 
-| 功能 | 引脚 | 驱动说明 |
-| --- | --- | --- |
-| LED1 | PB14 / PINCM31 | 默认 LED，低电平有效 |
-| LED2 | PB18 / PINCM44 | 低电平有效 |
-| LED3 | PA22 / PINCM47 | 低电平有效 |
-| 核心板 LED | PB22 / PINCM50 | 低电平有效，与 IMU_MOSI 冲突 |
-| UART0 | PA10 TX、PA11 RX | 默认 `printf` 目标，4 MHz MFCLK |
-| UART1 | PA8 TX、PA9 RX | 串口屏，115200、8N1 |
-| UART2 | PB15 TX、PB16 RX | MAIXCAM，115200、8N1 |
-| UART3 | PA26 TX、PB13 RX | PA26 与 TIMG8_CH0 冲突 |
-| OLED 软件 I2C | PB2 SCL、PB3 SDA | SSD1306，7 位地址 0x3C |
-| ICM42688 软件 I2C | PA1 SCL、PA0 SDA | 7 位地址 0x68，AD0 接地 |
-| 电机 A | PA28 PWM、PA13/PB26 方向 | TIMG7_CH0 |
-| 电机 B | PB20 PWM、PB9/PB7 方向 | TIMG12_CH0 |
-| 编码器 1 | PB23 A、PB12 B | A 相下降沿中断 |
-| 编码器 2 | PB4 A、PB5 B | A 相下降沿中断 |
-| 加热 PWM | PB19 / TIMG7_CH1 | 仅登记通用 PWM 路由 |
+## OLED滚动标定入口
 
-## ICM42688 姿态演示
+断开12 V，只保留5 V逻辑供电；开机前按住垂直中键并保持车体静止。IMU校准完成后显示 `ROLL C=ZERO`，第二、三行是左右有符号相对tick，第四行是相对BAD。首次进入自动建立零基线，之后每次中键有效按压只清零显示基线，不启动电机。断电后不按中键重启即可返回普通自检。详细记录方法见 [HARDWARE_ACCEPTANCE.md](HARDWARE_ACCEPTANCE.md)。
 
-- 上电后保持模块静止约 3 秒。程序连续收集 300 个 100 Hz 样本，检测到移动会清零进度并重新校准。
-- 校准只估计三轴陀螺仪零偏；Pitch/Roll 使用平均重力方向初始化，不把单一姿态误当作完整的三轴加速度计零偏标定。
-- ICM42688 使用 `±4 g`、`±1000 dps`、100 Hz，并将二阶 UI 低通滤波带宽显式配置为约 25 Hz。姿态解算采用六轴 AHRS，OLED 每约 100 ms 更新一次 Pitch、Roll、Yaw。
-- 车体坐标为 NWU：X 指向车头、Y 指向左侧、Z 指向上方。本车模块实际为传感器 `+Y` 向车头、`+X` 向左，因此右手系 `+Z` 向下；`g_attitude_service_config` 已配置为 `车体X←+传感器Y、车体Y←+传感器X、车体Z←-传感器Z`。
-- Yaw 在校准完成时置 0，表示上电后的相对航向，范围为 `-180°~180°`。六轴器件没有磁力计，静止零偏只能减小漂移，不能提供绝对航向或消除长期温漂。
-- 姿态算法基于固定提交 `015d68494274b479b5996bff2530ecbcfdc266f2` 的 x-io Fusion，MIT 许可证保存在 `ml_libs/FUSION_LICENSE.md`。
+## 软件分层
 
-### 模块分层与调用
+```text
+chassis_self_test / 用户任务
+        |
+        +-- chassis：非阻塞公共API、20 ms调度、遥测
+        |      +-- chassis_motion：轨迹、融合航向/角速度反馈、堵转与急停
+        |      +-- chassis_heading_fusion：编码器低频约束与陀螺仪短时预测
+        |      +-- chassis_odometry：融合航向中点积分并保留编码器航向
+        |      +-- motor_velocity：左右轮PID、前馈、速度滤波
+        |
+        +-- ml_encoder + ml_quadrature：GPIO软件4×解码
+        +-- ml_motor_driver：TB6612方向/PWM和40%绝对硬限幅
+        +-- icm42688_service：姿态、映射后零偏校正角速度和健康状态
+        +-- line_sensor + chassis_track_line_control：LF04两路三级P控制与方向优先仲裁
+        +-- chassis_track_mission：编码器+IMU胶囊赛道主任务
+```
 
-- `icm42688.c/.h`：负责 I²C 寄存器配置和六轴物理量读取。
-- `imu_attitude.c/.h`：负责轴映射、陀螺仪零偏校准和 Fusion 姿态解算。
-- `icm42688_service.c/.h`：负责 TIMG8 时基、100 Hz 非阻塞调度、校准状态和读取错误恢复。
-- `attitude_view.c/.h`：负责校准、角度和错误页面，不参与传感器或任务状态处理。
-- `attitude_app.c/.h`：持有服务上下文、处理事件并将显示刷新限制在约 10 Hz。
-- `main.c`：只负责平台启动与应用轮询。
-
-### 固件分层
-
-- `ml_libs` 驱动层只处理芯片外设和具体器件；新代码使用精确头文件，`headfile.h` 仅为旧代码保留。
-- `motion_engine` 是不访问硬件的运动状态引擎；`motion_control` 负责 10 ms 线路采样、20 ms 编码器/速度闭环和安全停止适配。
-- `mission_sequence` 是不访问硬件的任务状态机；`robot_input` 处理按键和串口，`mission_view` 处理 OLED，`robot_mission` 只负责初始化和命令编排。
-- 小车模块继续参与编译，但默认入口仍为独立姿态演示，不调用 `robot_mission_init()`。
-
-最小调用方式：
+常用入口在 `code/chassis.h`：
 
 ```c
-icm42688_service_t service;
-icm42688_service_output_t output;
+chassis_init(&g_chassis_default_config);
+chassis_set_wheel_speed(100.0f, 100.0f);
+chassis_set_velocity(120.0f, 0.0f);
+chassis_move_mm(500.0f, 120.0f);
+chassis_rotate_deg(90.0f, 60.0f);
+chassis_arc(300.0f, 180.0f, 100.0f);
 
-__enable_irq();
-status = icm42688_service_init(&service, &config);
-while (status == ML_STATUS_OK) {
-    icm42688_service_event_t event =
-        icm42688_service_poll(&service, &output);
-    if (event == ICM42688_SERVICE_EVENT_ANGLES_UPDATED) {
-        /* output.angles.pitch_deg / roll_deg / yaw_deg */
-    }
+while (1) {
+    chassis_poll();
 }
 ```
 
-## 其他网表网络
+所有命令均为非阻塞调用。应用应持续执行 `chassis_poll()`，并通过 `chassis_get_status()`检查运行、完成或故障状态。
 
-以下引脚已在 `ml_board.h` 集中定义，但模板不为其新增完整驱动：
+## 目录
 
-| 网络 | 引脚 |
-| --- | --- |
-| IMU_SCLK / MOSI / MISO | PA17 / PB22 / PA16 |
-| IMU_CS_A / CS_G / CS_P | PA25 / PA2 / PB6 |
-| IMU_INT_A / INT_G / INT_T | PB1 / PB17 / PA23 |
-| KEY_UP / DOWN / LEFT | PA14 / PA24 / PA15 |
-| KEY_RIGHT / CENTER | PB25 / PB24 |
-| BUZZER / ADC_read | PA21 / PA27 |
-| AD0 / AD1 / AD2 | PB21 / PA30 / PB0 |
-| C1 / C2 / C3 / C8 | PA31 / PA12 / PB8 / PB10 |
+- `ml_libs/`：板级GPIO、定时器、UART、I²C、电机、编码器和传感器驱动。
+- `code/`：PID、底盘配置、里程计、运动控制、遥测、自检和可选循迹。
+- `tests/`：可在PC上运行的纯算法测试。
+- `examples/legacy_drawing_task/`：已从默认工程移除的历史任务代码，仅供参考。
+- `examples/attitude_monitor/`：已从默认工程移除的独立姿态显示示例。
+- `user/project.uvprojx`：默认Keil底盘自检工程。
+- `user/project_track.uvprojx`：独立竞速工程，定义`CHASSIS_TRACK_MISSION_BUILD=1`。
 
-五向按键公共端接地，使用时必须配置为上拉输入，按下为低电平。
+## 构建
 
-## PWM 路由与复用冲突
-
-通用 PWM 驱动支持以下固定路由：
-
-| 定时器通道 | 引脚 |
-| --- | --- |
-| TIMG0_CH0 / CH1 | PA12 / PA13 |
-| TIMG6_CH0 / CH1 | PB6 / PB7 |
-| TIMG7_CH0 / CH1 | PA28 / PB19 |
-| TIMG8_CH0 / CH1 | PA26 / PA27 |
-| TIMG12_CH0 / CH1 | PB20 / PB24 |
-
-初始化时会登记驱动之间能够自动检测的资源冲突：
-
-| 引脚或资源 | 冲突用途 |
-| --- | --- |
-| PA13 | 电机 AIN1 / TIMG0_CH1 |
-| PB7 | 电机 BIN2 / TIMG6_CH1 |
-| PA26 | UART3_TX / TIMG8_CH0 |
-| PB22 | 核心板 LED / IMU_MOSI |
-| PB24 | KEY_CENTER / TIMG12_CH1 |
-| TIMG7 | CH0 电机 PWM / CH1 加热 PWM 共用频率 |
-
-同一定时器的两个 PWM 通道必须使用相同频率；第二个通道请求不同频率时返回 `ML_STATUS_BUSY`。未提供驱动的核心板 LED、IMU SPI 和按键由应用层负责遵守冲突表。
-
-## 驱动行为
-
-- 初始化和传输函数使用 `ml_status_t` 返回参数错误、未初始化、超时、资源占用、I2C 无 ACK、缓冲区状态或设备未找到等状态。
-- 软件 I2C 只主动拉低总线，高电平通过输入高阻释放，支持 ACK、时钟拉伸超时和 9 脉冲总线恢复。
-- EXTI 同时支持 PA0-PA27 与 PB0-PB27；共享 `GROUP1_IRQHandler` 会分别处理 GPIOA 和 GPIOB 的全部待处理中断。
-- UART RX 使用 64 字节环形缓冲区；满时丢弃新字节并累计溢出次数。
-- 电机初始化先设置四个方向脚和两个 PWM 通道为安全零输出，接通电机电源前应先完成空载波形检查。
-- 电机代码分为三层：`ml_motor_driver` 负责 TB6612 的 PWM/方向输出，`ml_encoder` 负责两路霍尔计数，`motor_velocity` 负责双轮 PID 和前馈；旧的 `motorA_duty()`、`motorB_duty()`、`encoder_get_and_clear()` 接口保留为兼容包装。
-- 编码器计数为 `volatile int32_t`，应用应使用 `encoder_get_and_clear()` 原子读取并清零。当前驱动在 A 相下降沿 1×计数；MG513X 的 13 PPR、1:28 减速比对应 364 tick/轮圈，65 mm 名义轮径的理论值为 0.560999 mm/tick，正式运行仍以左右轮实测值为准。
-- 扩展板电源按三条电源轨使用：12 V 给 TB6612 `VM`/电机，5 V 给核心板逻辑、OLED 和 TB6612 `VCC/STBY`，3.3 V 飞线给 LF04 与编码器；不要把单一电压同时接到所有端子。
-
-## 构建与验收
-
-全量构建命令：
+运行 PC 主机测试（需要 `gcc`）：
 
 ```text
-D:\\Keil_v5\\UV4\\UV4.exe -r user\\project.uvprojx -j0
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\run_host_tests.ps1
 ```
 
-提交前应确认：
+主机测试只验证可移植算法和安全状态机，不能替代 ARMCC 全量构建或实车验收。
 
-- 构建结果为 `0 Error(s), 0 Warning(s)`。
-- 含中文的 `.c/.h` 文件为 UTF-8 BOM，注释不存在乱码或替换字符。
-- 链接结果移除了未使用的 `pid_control`、`MPU6050_Init`、`MPU6050_GetData` 和 `SYSCFG_DL_init`。
-- 烧录前必须完成 `ROBOT_SETUP.md` 中的左右轮、传感器至轮轴距离、有效轮距和圆周补偿标定。
-- 硬件按“架空轮胎 → 低速直线 → A 点横线 → 单半径圆 → 完整任务”的顺序逐级验收。
+Keil 全量构建：
+
+```text
+D:\Keil_v5\UV4\UV4.exe -b user\project.uvprojx -j0
+```
+
+竞速工程不要在默认架空验收前烧录；验收完成后在现有μVision窗口打开并Rebuild：
+
+```text
+user\project_track.uvprojx
+```
+
+同一竞速固件还提供独立的纯LF04诊断入口：上电前按住上键，完成白底与IMU校准后松开上键；进入`LF ONLY READY`后用上/下键选择60、120或200 mm/s。READY或正常完成页不检查当前B0-B15位型，按中键即可启动；若从B0启动则立即开始丢线计时。转向只取LF04输出，IMU只记录，编码器仍负责左右轮闭环、里程和堵转；每次运行1000 mm自动停车。`B0`进入120 mm/s限速短搜，持续300 ms显示`LF LOST STOP`并要求重新上电；所有`B1-B15`均为正常可用位型。正常完成可导出CSV、重新摆车并选择下一档再次运行。
+
+竞速任务按中键边沿把当前位置和航向定义为A点零点并顺时针启动，路线为1.5 m直线、R500 mm半圆、1.5 m直线、R500 mm半圆，总长6141.6 mm。基线直线/弯道均为360 mm/s；通过实车验收后可用`CHASSIS_TRACK_SPEED_STAGE=1/2`把直线依次提高到380/400 mm/s，弯道保持360 mm/s。加减速度400 mm/s²，末段降至100 mm/s。
+
+编码器里程生成AB/BC/CD/DA的期望航向，融合航向误差以`Kp=4.0`和`±0.35 rad/s`限幅修正，现有速度模式继续提供融合角速度反馈。终点必须同时满足编码器中心里程达到`6141.6-15 mm`和累计融合顺时针航向至少350°；到`route+50 mm`仍未同时满足则锁停并显示`FAULT LAP CHECK`。
+
+LF04从左到右为PA31/PA12/PB8/PA27。按“从车头看向车尾”，左侧PA31/PA12合并为`black_bits & 0x03`，右侧PB8/PA27合并为`black_bits & 0x0C`：两组都有线时居中；仅左组有线时必须左轮减速、右轮加速，仅右组有线时必须左轮加速、右轮减速。所有`B1-B15`均可用，只有`B0`表示丢线。控制器每20 ms按左/居中/右三态执行`Kp=1.0、Ki=0、Kd=0`的P控制，不计算探头质心或方向防抖；红外差速为当前中心速度的22%且绝对值不超过90 mm/s。正式竞速中编码器/IMU轮间偏置只在与红外同向时叠加，总偏置仍限制在90 mm/s，反向辅助直接丢弃；双组居中时保留路线融合修正。`B0`把中心速度限制到120 mm/s并沿最后一次可靠红外方向短搜，辅助修正不得反转短搜方向；若此前居中则只跟随路线方向，持续300 ms锁停。红外不参与终点双门，运行中中键仍立即急停。
+
+GPIO输入初始化会先清除遗留输出使能；竞速初始化、启动边沿和每次20 ms采样都会把四路LF04重新确认为普通GPIO上拉输入。LF04固定使用白底高、黑线低逻辑，期望白底为`WF`，归一化采用`(~R)&0x0F`，不再把开机瞬态保存为极性基线。IMU校准期间还必须连续10个20 ms样本得到`RF`才允许进入READY；否则保持停车并显示`LF WHITE WAIT`。启动前重申失败会禁止启动，运行中失败会立即锁停并显示`LF GPIO FAULT`。RUN第四行每秒交替显示`Rr Ww Bb`与`LFb Ln DnHn`，分别用于核对原始电平/固定白底期望/归一化黑线位，以及丢线恢复/距离门/航向门。
+
+UART0固定为PA10/PA11、115200、8N1、无流控。竞速完全停稳后发送单个`D`导出纯20列CSV，确认文件保存后再发送`C`清空RAM；运行和制动期间两者均不执行，仅每秒最多回复一次`BUSY`。编码器和融合航向为不回绕的累计值，原始IMU Yaw保留回绕诊断；同时间戳立即采样覆盖上一条，导出的时间戳严格递增。SSCOM必须关闭“发→/收←”方向标记、时间标签、定时发送和自动换行，只发一次ASCII `D`或十六进制`44`并等待完整导出。
+
+验收标准为 `0 Error(s), 0 Warning(s)`。烧录和上电前必须先阅读 `WIRING.md`，实车自检和标定步骤见 `ROBOT_SETUP.md`。
+
+Fusion算法授权保留在 `ml_libs/FUSION_LICENSE.md`，硬件规格书和原始资料均未从仓库删除。
