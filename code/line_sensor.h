@@ -9,14 +9,9 @@
 #define LINE_SENSOR_WHITE_LEVELS_EXPECTED (0x0FU)
 #define LINE_SENSOR_WHITE_STABLE_SAMPLES  (10U)
 
-#define LINE_SENSOR_LEFT_GROUP_MASK  (0x03U)
-#define LINE_SENSOR_RIGHT_GROUP_MASK (0x0CU)
-
 typedef struct {
     uint8_t raw_bits;
     uint8_t black_bits;
-    bool left_on;
-    bool right_on;
     bool lost;
     bool io_fault;
 } line_sample_t;

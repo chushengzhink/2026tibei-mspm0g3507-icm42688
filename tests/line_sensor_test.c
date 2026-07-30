@@ -119,9 +119,8 @@ static void test_white_high_black_low(void)
         check(g_input_up_count == (uint8_t) (before + 4U),
             "every LF04 sample reasserts all four pull-up inputs");
     }
-    check(line.black_bits == 0x06U && line.left_on &&
-        line.right_on && !line.lost && !line.io_fault,
-        "low-going A12 and PB8 enable both grouped inputs");
+    check(line.black_bits == 0x06U && !line.lost && !line.io_fault,
+        "low-going A12 and PB8 remain distinct active inputs");
 }
 
 static void test_input_reassert_failure(void)
@@ -136,8 +135,7 @@ static void test_input_reassert_failure(void)
     calls_before = g_gpio_init_calls;
     g_gpio_fail_call = (int32_t) g_gpio_init_calls + 3;
     line = line_sensor_read();
-    check(line.io_fault && line.lost && !line.left_on &&
-        !line.right_on && line.black_bits == 0U &&
+    check(line.io_fault && line.lost && line.black_bits == 0U &&
         g_gpio_init_calls == calls_before + 4U,
         "a failed input reassertion still visits four inputs and cannot become B15");
     g_gpio_fail_call = -1;
@@ -218,11 +216,6 @@ static void test_all_black_patterns(void)
         line = line_sensor_read();
         check(line.black_bits == bits && !line.lost,
             "B1 through B15 are all valid line samples");
-        check(line.left_on ==
-                ((bits & LINE_SENSOR_LEFT_GROUP_MASK) != 0U) &&
-            line.right_on ==
-                ((bits & LINE_SENSOR_RIGHT_GROUP_MASK) != 0U),
-            "every pattern maps directly into the two sensor groups");
     }
     g_raw_bits = 0x0FU;
     line = line_sensor_read();

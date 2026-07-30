@@ -6,7 +6,7 @@
 
 #include "ml_common.h"
 
-#define CHASSIS_TRACK_LINE_TEST_SPEED_COUNT (3U)
+#define CHASSIS_TRACK_LINE_TEST_SPEED_COUNT (5U)
 
 typedef enum {
     CHASSIS_TRACK_LINE_TEST_READY = 0,
