@@ -63,6 +63,15 @@ static line_sample_t sample_for(uint8_t black_bits)
     return sample;
 }
 
+static chassis_track_line_control_config_t curve_memory_test_config(void)
+{
+    chassis_track_line_control_config_t config =
+        g_chassis_track_line_control_line_only_config;
+
+    config.curve_memory_enabled = true;
+    return config;
+}
+
 static void test_all_centroid_patterns(void)
 {
     static const float expected_error[16] = {
@@ -220,6 +229,9 @@ static void test_infrared_priority_over_route(void)
     line_sample_t normal_right = sample_for(0x0CU);
     line_sample_t centered = sample_for(0x06U);
 
+    check(!g_chassis_track_line_control_default_config.
+              curve_memory_enabled,
+        "formal race configuration keeps curve memory disabled");
     (void) chassis_track_line_control_init(&control,
         &g_chassis_track_line_control_default_config);
     (void) chassis_track_line_control_update(&control, &outer_right,
@@ -509,6 +521,8 @@ static void test_pid_history_is_not_reset_between_patterns(void)
 
 static void test_line_only_curve_memory_b0_taper(void)
 {
+    chassis_track_line_control_config_t config =
+        curve_memory_test_config();
     chassis_track_line_control_t control = {0};
     chassis_track_line_control_output_t output;
     line_sample_t outer_left = sample_for(0x01U);
@@ -516,8 +530,7 @@ static void test_line_only_curve_memory_b0_taper(void)
     line_sample_t lost = sample_for(0x00U);
     uint8_t cycle;
 
-    (void) chassis_track_line_control_init(&control,
-        &g_chassis_track_line_control_line_only_config);
+    (void) chassis_track_line_control_init(&control, &config);
     (void) chassis_track_line_control_update(&control, &outer_left,
         350.0f, 0.0f, &output);
     check(near_value(output.correction_mm_s, 120.0f, 0.001f) &&
@@ -568,6 +581,8 @@ static void test_line_only_curve_memory_b0_taper(void)
 
 static void test_line_only_curve_memory_transitions(void)
 {
+    chassis_track_line_control_config_t config =
+        curve_memory_test_config();
     chassis_track_line_control_t control = {0};
     chassis_track_line_control_output_t output;
     line_sample_t outer_left = sample_for(0x01U);
@@ -577,8 +592,7 @@ static void test_line_only_curve_memory_transitions(void)
     line_sample_t all_black = sample_for(0x0FU);
     line_sample_t lost = sample_for(0x00U);
 
-    (void) chassis_track_line_control_init(&control,
-        &g_chassis_track_line_control_line_only_config);
+    (void) chassis_track_line_control_init(&control, &config);
     (void) chassis_track_line_control_update(&control, &outer_left,
         350.0f, 0.0f, &output);
     (void) chassis_track_line_control_update(&control, &lost,
@@ -652,6 +666,8 @@ static void test_line_only_curve_memory_speed_scaling(void)
     static const float hold[5] = {
         18.6f, 37.2f, 62.0f, 86.8f, 108.5f
     };
+    chassis_track_line_control_config_t config =
+        curve_memory_test_config();
     chassis_track_line_control_t control = {0};
     chassis_track_line_control_output_t output;
     line_sample_t outer_left = sample_for(0x01U);
@@ -659,8 +675,7 @@ static void test_line_only_curve_memory_speed_scaling(void)
     uint8_t speed_index;
     uint8_t cycle;
 
-    (void) chassis_track_line_control_init(&control,
-        &g_chassis_track_line_control_line_only_config);
+    (void) chassis_track_line_control_init(&control, &config);
     for (speed_index = 0U; speed_index < 5U; ++speed_index) {
         chassis_track_line_control_reset(&control);
         (void) chassis_track_line_control_update(&control, &outer_left,
@@ -685,59 +700,52 @@ static void test_line_only_failed_curve_sequence_replay(void)
     chassis_track_line_control_t control = {0};
     chassis_track_line_control_output_t output;
     line_sample_t outer_left = sample_for(0x01U);
-    line_sample_t inner_left = sample_for(0x02U);
     line_sample_t inner_right = sample_for(0x04U);
     line_sample_t lost = sample_for(0x00U);
-    float first_opposite;
-    float steady_opposite;
-    uint8_t cycle;
+    uint16_t cycle;
 
     (void) chassis_track_line_control_init(&control,
         &g_chassis_track_line_control_line_only_config);
+    check(!g_chassis_track_line_control_line_only_config.
+              curve_memory_enabled,
+        "LF-only production configuration disables curve memory");
     (void) chassis_track_line_control_update(&control, &outer_left,
         350.0f, 0.0f, &output);
-    for (cycle = 0U; cycle < 37U; ++cycle) {
-        (void) chassis_track_line_control_update(&control, &lost,
-            350.0f, 0.0f, &output);
-    }
-    (void) chassis_track_line_control_update(&control, &inner_left,
-        350.0f, 0.0f, &output);
-    (void) chassis_track_line_control_update(&control, &lost,
-        350.0f, 0.0f, &output);
-    (void) chassis_track_line_control_update(&control, &inner_right,
-        350.0f, 0.0f, &output);
-    check(near_value(control.curve_travel_mm, 280.0f, 0.001f) &&
-        near_value(output.correction_mm_s, 0.0f, 0.001f) &&
-        control.curve_memory_side == 1,
-        "failed CSV first early B4 is suppressed at about 280 mm");
-
-    (void) chassis_track_line_control_update(&control, &inner_right,
-        350.0f, 0.0f, &output);
-    first_opposite = output.correction_mm_s;
-    (void) chassis_track_line_control_update(&control, &inner_right,
-        350.0f, 0.0f, &output);
-    steady_opposite = output.correction_mm_s;
-    check(first_opposite > 88.0f && first_opposite < 91.0f &&
-        steady_opposite > 91.0f && steady_opposite < 93.0f &&
-        control.curve_memory_side == 1,
-        "early B4 keeps positive curve hold plus negative PD residual");
-
-    (void) chassis_track_line_control_update(&control, &lost,
-        350.0f, 0.0f, &output);
     check(near_value(output.correction_mm_s, 120.0f, 0.001f) &&
-        control.curve_memory_side == 1,
-        "B0 after early B4 resumes the remembered positive curve");
-    for (cycle = 1U; cycle < 60U; ++cycle) {
+        control.curve_memory_side == 0,
+        "LF-only B1 keeps outer boost without latching curve memory");
+    for (cycle = 0U; cycle < 200U; ++cycle) {
         (void) chassis_track_line_control_update(&control, &lost,
             350.0f, 0.0f, &output);
     }
-    check(near_value(output.correction_mm_s, 108.5f, 0.001f) &&
-        control.curve_memory_side == 1,
-        "failed CSV replay settles to positive hold instead of minus 16");
+    check(near_value(output.correction_mm_s, 120.0f, 0.001f) &&
+        near_value(control.curve_travel_mm, 0.0f, 0.001f),
+        "long B0 holds the last B1 error without starting a travel gate");
+
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    check(near_value(output.correction_mm_s, 0.0f, 0.001f) &&
+        control.pending_cycles == 1U,
+        "first B4 after remembered B1 is the suppressed reversal sample");
+    (void) chassis_track_line_control_update(&control, &inner_right,
+        350.0f, 0.0f, &output);
+    check(output.correction_mm_s < 0.0f &&
+        output.correction_mm_s >= -90.0f &&
+        control.pending_cycles == 0U &&
+        control.curve_memory_side == 0,
+        "second B4 immediately takes ordinary negative PD control");
+    (void) chassis_track_line_control_update(&control, &lost,
+        350.0f, 0.0f, &output);
+    check(output.correction_mm_s < 0.0f &&
+        output.correction_mm_s >= -90.0f &&
+        control.curve_memory_side == 0,
+        "B0 after confirmed B4 holds right correction, not positive curve memory");
 }
 
 static void test_line_only_curve_exit_confirmation(void)
 {
+    chassis_track_line_control_config_t config =
+        curve_memory_test_config();
     chassis_track_line_control_t control = {0};
     chassis_track_line_control_output_t output;
     line_sample_t outer_left = sample_for(0x01U);
@@ -748,8 +756,7 @@ static void test_line_only_curve_exit_confirmation(void)
     line_sample_t lost = sample_for(0x00U);
     uint16_t cycle;
 
-    (void) chassis_track_line_control_init(&control,
-        &g_chassis_track_line_control_line_only_config);
+    (void) chassis_track_line_control_init(&control, &config);
     (void) chassis_track_line_control_update(&control, &outer_left,
         350.0f, 0.0f, &output);
     for (cycle = 0U; cycle < 172U; ++cycle) {
@@ -847,6 +854,8 @@ static void test_line_only_curve_exit_speed_scaling(void)
     static const uint16_t cycles_to_gate[5] = {
         1000U, 500U, 300U, 215U, 172U
     };
+    chassis_track_line_control_config_t config =
+        curve_memory_test_config();
     chassis_track_line_control_t control = {0};
     chassis_track_line_control_output_t output;
     line_sample_t outer_left = sample_for(0x01U);
@@ -854,8 +863,7 @@ static void test_line_only_curve_exit_speed_scaling(void)
     uint16_t cycle;
     uint8_t speed_index;
 
-    (void) chassis_track_line_control_init(&control,
-        &g_chassis_track_line_control_line_only_config);
+    (void) chassis_track_line_control_init(&control, &config);
     for (speed_index = 0U; speed_index < 5U; ++speed_index) {
         chassis_track_line_control_reset(&control);
         (void) chassis_track_line_control_update(&control, &outer_left,

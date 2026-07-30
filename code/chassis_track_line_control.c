@@ -53,7 +53,7 @@ const chassis_track_line_control_config_t
         600U,
         2U,
         5U,
-        true
+        false
     };
 
 static bool line_control_float_valid(float value)
