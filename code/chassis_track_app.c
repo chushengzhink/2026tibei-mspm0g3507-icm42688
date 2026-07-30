@@ -57,7 +57,6 @@ typedef struct {
     bool velocity_started;
     bool braking_capture_started;
     bool line_gpio_fault;
-    bool line_lost_fault;
     bool line_only_mode;
     bool uart_busy_sent;
     bool initialized;
@@ -156,7 +155,7 @@ static void track_show(const chassis_status_t *status)
         track_show_line(1U, g_track_app.line_only_mode ?
             "LF ONLY READY" : "READY PRESS C");
         if (g_track_app.line_only_mode) {
-            (void) snprintf(line, sizeof(line), "S%03u D1000",
+            (void) snprintf(line, sizeof(line), "S%03u NO LIMIT",
                 (unsigned int) g_track_app.line_test_output.
                     selected_speed_mm_s);
             track_show_line(2U, line);
@@ -220,9 +219,7 @@ static void track_show(const chassis_status_t *status)
             (void) snprintf(line, sizeof(line), "LF%X L%u D%uH%u",
                 (unsigned int) g_track_app.last_line.black_bits,
                 g_track_app.line_control_output.recovering ? 1U : 0U,
-                g_track_app.line_only_mode ?
-                    (g_track_app.line_test_output.progress_mm >=
-                     g_track_app.line_test.config.distance_mm) :
+                g_track_app.line_only_mode ? 0U :
                     g_track_app.output.distance_gate_met,
                 g_track_app.line_only_mode ? 0U :
                     g_track_app.output.heading_gate_met);
@@ -258,9 +255,7 @@ static void track_show(const chassis_status_t *status)
         track_show_line(4U, g_track_app.output.passed ?
             "ENC+IMU PASS" : "ENC+IMU FAIL");
     } else {
-        if (g_track_app.line_lost_fault) {
-            track_show_line(1U, "LF LOST STOP");
-        } else if (g_track_app.line_gpio_fault) {
+        if (g_track_app.line_gpio_fault) {
             track_show_line(1U, "LF GPIO FAULT");
         } else if (g_track_app.chassis_fault == CHASSIS_FAULT_STALL) {
             track_show_line(1U, "TRACK STALL");
@@ -303,7 +298,6 @@ static void track_fail(ml_status_t status)
     g_track_app.fault_status = status;
     g_track_app.chassis_fault = CHASSIS_FAULT_NONE;
     g_track_app.line_gpio_fault = false;
-    g_track_app.line_lost_fault = false;
     g_track_app.state = TRACK_APP_FAULT;
 }
 
@@ -313,19 +307,7 @@ static void track_fail_line_gpio(ml_status_t status)
     g_track_app.fault_status = status;
     g_track_app.chassis_fault = CHASSIS_FAULT_NONE;
     g_track_app.line_gpio_fault = true;
-    g_track_app.line_lost_fault = false;
     g_track_app.state = TRACK_APP_FAULT;
-}
-
-static void track_fail_line_lost(void)
-{
-    chassis_emergency_stop();
-    g_track_app.fault_status = ML_STATUS_BUFFER_EMPTY;
-    g_track_app.chassis_fault = CHASSIS_FAULT_NONE;
-    g_track_app.line_gpio_fault = false;
-    g_track_app.line_lost_fault = true;
-    g_track_app.state = TRACK_APP_FAULT;
-    (void) chassis_capture_telemetry_now();
 }
 
 static void track_fail_chassis(chassis_fault_t fault)
@@ -334,7 +316,6 @@ static void track_fail_chassis(chassis_fault_t fault)
     g_track_app.fault_status = ML_STATUS_TIMEOUT;
     g_track_app.chassis_fault = fault;
     g_track_app.line_gpio_fault = false;
-    g_track_app.line_lost_fault = false;
     g_track_app.state = TRACK_APP_FAULT;
 }
 
@@ -649,9 +630,6 @@ void chassis_track_app_poll(void)
                     g_track_app.line_control_output.line_valid,
                     g_track_app.line_control_output.recovering,
                     false);
-                if (g_track_app.line_control_output.lost_fault) {
-                    track_fail_line_lost();
-                }
             }
             if ((command_status == ML_STATUS_OK) &&
                 (g_track_app.state == TRACK_APP_RUNNING)) {

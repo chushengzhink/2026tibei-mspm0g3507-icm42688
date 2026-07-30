@@ -19,23 +19,22 @@ typedef struct {
     float maximum_wheel_speed_mm_s;
     float maximum_correction_mm_s;
     float correction_ratio;
-    float recovery_speed_mm_s;
+    float outer_single_maximum_correction_mm_s;
+    float outer_single_correction_ratio;
     float kp;
     float ki;
     float kd;
     float pid_output_limit;
     float pid_integral_limit;
     uint16_t control_period_ms;
-    uint16_t lost_timeout_ms;
 } chassis_track_line_control_config_t;
 
 typedef struct {
     chassis_track_line_control_config_t config;
     pid_t pid;
-    float last_pid_output;
-    chassis_track_line_state_t previous_state;
+    float last_line_error;
+    uint8_t last_valid_black_bits;
     uint16_t lost_ms;
-    bool lost_fault;
     bool initialized;
 } chassis_track_line_control_t;
 
@@ -49,7 +48,6 @@ typedef struct {
     chassis_track_line_state_t line_state;
     bool line_valid;
     bool recovering;
-    bool lost_fault;
 } chassis_track_line_control_output_t;
 
 extern const chassis_track_line_control_config_t

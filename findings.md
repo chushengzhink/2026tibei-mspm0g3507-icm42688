@@ -100,3 +100,35 @@
 - The four operating/acceptance documents are now synchronized: the boot-Up LF-only entry remains, only its pattern gate was removed, and the staged hardware check uses explicit left/right wheel-speed relationships.
 - The complete portable suite now passes 18/18 after adding the missing PID source; `git diff --check` also passes.
 - ARM Compiler 5 is available at `D:\Keil_v5\ARM\ARMCC\bin\armcc.exe`; the race project uses `__MSPM0G3507__`, `CHASSIS_TRACK_MISSION_BUILD=1`, and the user/code/ml_libs/MSPM0 SDK/CMSIS include paths.
+
+## Phase 12 Unlimited LF04-Only Lap
+- The current diagnostic default is 60/120/200 mm/s with a 1000 mm distance-triggered braking state.
+- The application already treats Center during RUNNING as a latched emergency stop, so an unlimited lap needs no new stop interface.
+- At 350 mm/s the 0.22 infrared bias is 77 mm/s, producing 273/427 mm/s wheel targets, below the existing 500 mm/s limit.
+- The least disruptive compatible representation is `distance_mm=0` for unlimited operation while retaining the existing positive-distance braking path for callers/tests.
+- One 6141.6 mm lap takes about 102.4 s at 60 mm/s, longer than the non-overwriting 60 s telemetry buffer; motion remains unaffected when the buffer fills.
+- Focused host builds must include `-Itests/stubs -Icode -Iml_libs`; the line-control case also links `code/pid.c`.
+- The post-change host suite passes 18/18, including unlimited travel beyond 6141.6 mm and the 350 mm/s 273/427 wheel targets.
+- Both changed production sources compile directly with ARMCC under the race defines; both project XML files and whitespace checks pass.
+- A user-owned `project_track.uvprojx` μVision window appeared before batch build, so both full Rebuilds remain an interactive handoff rather than launching a conflicting process.
+
+## Phase 13 Four-Sensor Centroid Requirements
+- The LF04 drawing confirms sensor-center intervals of 33/14.5/33 mm, giving positions `-40.25/-7.25/+7.25/+40.25 mm` about the module center.
+- The normalized steering error is `-average(active_position_mm)/40.25`; left detections are positive and therefore slow the left wheel.
+- B1-B15 are all valid centroid inputs. B6, B9, and B15 average to zero; only B0 is lost.
+- B0 must keep the last valid normalized error at the current requested speed indefinitely. It remains a telemetry recovery state but cannot create a line-loss fault.
+- If B0 occurs before any valid sample, the remembered error is zero: LF-only drives straight and formal racing may still use route assistance.
+- The grouped fields and the 120 mm/s/300 ms fault path are confined to `line_sensor`, `chassis_track_line_control`, their tests, and the race application.
+- Hardware feedback says the previous steering was insufficient. The selected conservative retune is `Kp=1.5`; with output limited to `±1`, outer-sensor correction remains capped while inner/intermediate centroid correction rises by 50%.
+- After the `Kp=1.5` retune, all 18 host groups pass and all four affected production sources compile with ARM Compiler 5 under the race defines.
+- Both Keil project XML files, affected-file trailing whitespace, `git diff --check`, and the unchanged speed/stall/PWM/steering safety constants pass final portable validation.
+- Because an interactive `project_track.uvprojx` μVision window is open, no concurrent full build was started; both project Rebuilds remain the only outstanding Phase 13 verification.
+
+## Phase 14 Outer-Single Steering Boost
+- The source now contains the user's manual `Kp=1.8`, while centroid tests and operating documents still assume `Kp=1.5`; this explains the current `17/18` host baseline.
+- B1/B8 already saturate the PID output at `±1`, so raising `Kp` cannot increase their steering. Their effective limits are the 22% speed ratio and 90 mm/s total steering cap.
+- The confirmed behavior is a dedicated 35%/120 mm/s cap for current B1/B8 and for B0 only while the last valid pattern remains B1/B8. Any new valid pattern immediately selects its own normal or boosted mode.
+- The implemented 400 mm/s boosted target `280/520` is proportionally scaled by the existing wheel limiter to approximately `269.23/500 mm/s`; 350 and 360 mm/s remain unscaled at `230/470` and `240/480`.
+- The post-change portable suite passes all `18/18` groups, including dynamic 90/120 mm/s route arbitration and B1/B8 memory transitions.
+- Four affected production sources pass ARM Compiler 5 checks; both project XML files, trailing whitespace, `git diff --check`, and unchanged chassis safety limits also pass.
+- The already-open race μVision window prevents a parallel batch Rebuild. The remaining build acceptance is sequential user-triggered Rebuild of `project_track.uvprojx` and `project.uvprojx` at `0 Error(s), 0 Warning(s)`.

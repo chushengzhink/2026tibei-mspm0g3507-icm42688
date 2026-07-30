@@ -188,3 +188,59 @@
   - Compiled `chassis_track_line_control.c`, `chassis_track_line_test.c`, `chassis_track_app.c`, and `chassis_track_mission.c` directly with ARMCC: `4/4 passed`.
   - Parsed both Keil project XML files and re-audited the 500 mm/s wheel, 8-cycle stall, race PID, and 20000 PWM safety limits; all remain intact.
   - Confirmed one interactive μVision window is open on `project_track.uvprojx`; no additional UV4 process was started.
+
+### Phase 12: LF04-Only Unlimited Lap and 350 mm/s
+- **Status:** in_progress
+- Actions taken:
+  - Re-read the project constraints and implementation/file-planning skills and preserved the dirty worktree.
+  - Locked the user-selected five speeds and manual Center-key locked stop behavior.
+  - Confirmed zero-distance sentinel compatibility, 350 mm/s wheel headroom, and the 60-second telemetry-buffer limitation.
+  - Ran the pre-change full host suite successfully: `18/18 passed`.
+  - Implemented the five-speed default, zero-distance unlimited path, OLED `NO LIMIT` text, and focused regressions.
+  - First focused GCC command failed before source compilation because it omitted the existing `ml_libs` include path; the retry will reuse the test runner's exact flags.
+  - The first error-log patch used stale table context and did not apply; switched to this exact Phase 12 progress entry.
+  - Re-ran both focused tests with the correct includes; line-test and line-control regressions passed.
+  - Updated README, WIRING, ROBOT_SETUP, and HARDWARE_ACCEPTANCE for five speeds, unlimited laps, locked manual stopping, safe CSV export, and the 60-second RAM limit.
+  - Ran the complete post-change host suite successfully: `18/18 passed`.
+  - Confirmed no UV4 process is running and recovered the race project's exact ARMCC defines/include paths for portable source checks.
+  - Compiled `chassis_track_line_test.c` and `chassis_track_app.c` directly with ARMCC under the race defines; both passed without diagnostics.
+  - Parsed both Keil project XML files and passed `git diff --check`; only existing LF/CRLF conversion notices were emitted.
+  - The default Keil build was safely aborted before launch because a UV4 process appeared after the earlier check; no parallel builder was started.
+  - Added the explicit 350 mm/s B0 regression and reran the full suite: `18/18 passed`.
+  - Rechecked both project XML files, affected-file trailing whitespace, `git diff --check`, and all relevant speed/stall/line safety constants successfully.
+  - Confirmed the newly opened interactive window is `project_track.uvprojx`; both required full Rebuilds are pending user action in μVision.
+
+### Phase 13: Four-Sensor Centroid and Unlimited B0 Hold
+- **Status:** in_progress
+- Actions taken:
+  - Re-read project constraints and implementation/file-planning skills and preserved the existing dirty worktree.
+  - Confirmed the physical LF04 positions from the supplied drawing and the current grouped controller/lost-fault interface surface.
+  - Locked user choices: both modes share the centroid controller, B0 holds error at full task speed indefinitely, startup B0 is centered, and PID starts P-only.
+  - The first combined source patch did not apply because the application context field order differed; no source hunk was applied, so implementation will continue with exact file-specific patches.
+  - Removed grouped sample fields, implemented the physical four-sensor centroid, retained PID history, and removed speed-reduction/timeout line-loss handling.
+  - Removed the application `LF LOST STOP` path while preserving GPIO, chassis, Center-key, stall, and mission faults.
+  - Replaced grouped controller regressions with all-16 centroid, per-sensor strength, route-priority, five remembered-state B0, startup B0, counter saturation, and PID-history tests.
+  - Ran the first post-change complete host suite successfully: `18/18 passed`.
+  - Incorporated new hardware feedback by increasing line `Kp` from 1.0 to 1.5 while preserving the 22% ratio, 90 mm/s bias cap, 500 mm/s wheel limit, and P-only structure.
+  - Re-ran the complete host suite after the gain change: `18/18 passed`.
+  - Confirmed obsolete grouped fields and line-loss timeout/fault identifiers are absent from production code and tests; remaining `LF LOST STOP` text only documents that the OLED must not show it.
+  - Compiled `line_sensor.c`, `chassis_track_line_control.c`, `chassis_track_line_test.c`, and `chassis_track_app.c` directly with ARMCC under the race defines: `4/4 passed`.
+  - Parsed both Keil project XML files, checked affected-file trailing whitespace, passed `git diff --check`, and re-audited the 500 mm/s wheel, 8-cycle stall, 20000 PWM, 90 mm/s correction, and 22% ratio limits.
+  - Confirmed the interactive `project_track.uvprojx` window remains open; no parallel UV4 process was launched, so both full Rebuilds remain a user handoff.
+
+### Phase 14: Outer-Single Boost and B0 Mode Memory
+- **Status:** in_progress
+- Actions taken:
+  - Re-read the project constraints and implementation/file-planning skills, ran session catch-up, and preserved the dirty worktree.
+  - Confirmed the user-selected 35%/120 mm/s boost and B1/B8-to-B0-only memory policy against the current controller.
+  - Reproduced the pre-change host result: `17/18 passed`; only line-control expectations fail because source `Kp=1.8` no longer matches test `Kp=1.5`.
+  - Added the dynamic outer-single configuration, last-valid-pattern memory, and focused transition/strength regressions.
+  - The first focused GCC command failed before source compilation because `tests\build` does not exist; the retry will use an explicit executable in the system temporary directory like the host runner.
+  - Re-ran the focused line-control test with strict GCC warnings from the system temporary directory; it passed.
+  - Added an explicit non-outer 90 mm/s route-cap assertion and synchronized README, WIRING, ROBOT_SETUP, and HARDWARE_ACCEPTANCE with `Kp=1.8` and the dynamic boost behavior.
+  - Ran the complete host suite after implementation: `18/18 passed`.
+  - Confirmed the four operating documents no longer present `Kp=1.5` or the old B1/B8 22%/90 mm/s behavior as current instructions.
+  - Added symmetric 90 mm/s limiting for the zero-centroid route-only branch and reran the complete host suite: `18/18 passed`.
+  - Confirmed the interactive race μVision window remains open and compiled the four affected production sources directly with ARMCC: `4/4 passed`; no UV4 process was launched.
+  - Parsed both Keil project XML files, passed affected-file trailing-whitespace and `git diff --check`, and re-audited the 500 mm/s wheel, 8-cycle stall, 20000 PWM, normal 90 mm/s, and outer 120 mm/s limits.
+  - Portable Phase 14 verification is complete; only the two user-triggered full Rebuilds and hardware trial remain.

@@ -4,7 +4,7 @@
 在保留40%硬限幅、默认自检和现有安全保护的前提下，实现PA27四路LF04辅助纠偏、竞速速度/用时/PWM遥测及UART0 CSV导出，并完成主机与ARM构建验证。
 
 ## Current Phase
-Phase 11
+Phase 13
 
 ## Phases
 
@@ -86,6 +86,33 @@ Phase 11
 - [ ] Hand off both full Rebuilds to the already-open interactive Keil windows
 - **Status:** in_progress
 
+### Phase 12: LF04-Only Unlimited Lap and 350 mm/s
+- [x] Expand stopped-only speed selection to 60/120/200/280/350 mm/s
+- [x] Make the default LF04-only distance zero mean unlimited while preserving positive-distance compatibility
+- [x] Keep progress/elapsed telemetry and Center-key locked emergency stop unchanged
+- [x] Update OLED text, host regressions, and the four operating documents
+- [ ] Run the full host suite, ARMCC/XML/whitespace checks, and hand off both Keil Rebuilds
+- **Status:** in_progress
+
+### Phase 13: Four-Sensor Centroid and Unlimited B0 Hold
+- [x] Replace grouped left/right classification with the physical four-sensor centroid
+- [x] Hold the last valid normalized error through B0 without speed reduction or timeout
+- [x] Remove obsolete grouped/lost-fault interfaces and preserve infrared-priority route arbitration
+- [x] Update full-pattern regressions and the four operating documents
+- [x] Raise line `Kp` from 1.0 to 1.5 after the first hardware turning trial
+- [x] Run the full host suite plus ARMCC/XML/whitespace and safety-limit checks
+- [ ] Hand off both full Rebuilds to the already-open interactive Keil window
+- **Status:** in_progress
+
+### Phase 14: Outer-Single Boost and B0 Mode Memory
+- [x] Add dedicated 35%/120 mm/s B1/B8 steering configuration
+- [x] Remember the last valid LF04 pattern so only B1/B8-to-B0 retains boost
+- [x] Preserve infrared-priority route arbitration with dynamic 90/120 mm/s caps
+- [x] Make centroid tests follow the configured `Kp=1.8` and cover boost transitions
+- [x] Synchronize operating documents and complete portable verification
+- [ ] Hand off both full Rebuilds to the existing interactive Keil window
+- **Status:** in_progress
+
 ## Decisions Made
 | Decision | Rationale |
 |----------|-----------|
@@ -105,6 +132,13 @@ Phase 11
 | Supersede Phase 10 centroid/B15 policy | User explicitly requires four inputs grouped as two: B1-B15 are valid grouped states and only B0 is lost |
 | Make infrared direction authoritative | Encoder/IMU assistance may reinforce but must never cancel or reverse the grouped infrared wheel bias |
 | Use P-only grouped steering at 0.22 ratio, 90 mm/s cap | Binary left/center/right error does not justify integral/derivative history; the initial ratio matches the PDF R500 geometry |
+| Use five LF-only speeds through 350 mm/s | User selected 60/120/200/280/350 for staged hardware validation |
+| Use `distance_mm=0` as unlimited | Removes the default 1000 mm stop without breaking the existing positive-distance state-machine interface |
+| Keep Center as a locked emergency stop | User explicitly chose manual locked stopping at the end of the lap rather than automatic or repeatable graceful stopping |
+| Use physical LF04 centers `-40.25/-7.25/+7.25/+40.25 mm` | The module drawing fixes the 33/14.5/33 mm center spacing and the user requested true four-sensor control |
+| Apply four-sensor control to both modes | User selected one shared controller for LF-only diagnostics and formal racing |
+| Hold the last normalized error at full task speed through B0 | User explicitly selected no 120 mm/s reduction and no 300 ms fault; a startup B0 defaults to centered error |
+| Increase the four-sensor P gain while retaining limits | After the car failed to turn tightly enough, raise to `Kp=1.5`, keep `Ki=0`, `Kd=0`, PID output `±1`, 22% ratio, and 90 mm/s cap |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
@@ -125,3 +159,4 @@ Phase 11
 | First Phase 9 running-loop patch did not match the current nested command block | 1 | Split the integration into small exact patches using the current numbered source |
 | Phase 11 baseline host suite did not link `chassis_track_line_control_test` because `code/pid.c` was omitted | 1 | Add the dependency to that host-test case as part of this phase |
 | Combined hardware-acceptance patch did not match the exact existing LF04 wording | 1-2 | Re-read the focused section, then split every paragraph into an independent exact patch |
+| Phase 14 focused GCC output directory did not exist | 1 | Write the focused executable to the system temporary directory like the host runner |

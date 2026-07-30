@@ -113,8 +113,6 @@ line_sample_t line_sensor_read(void)
     if (line_sensor_reassert_inputs() != ML_STATUS_OK) {
         result.raw_bits = 0U;
         result.black_bits = 0U;
-        result.left_on = false;
-        result.right_on = false;
         result.lost = true;
         result.io_fault = true;
         return result;
@@ -123,11 +121,7 @@ line_sample_t line_sensor_read(void)
     result.raw_bits = line_sensor_read_raw();
     result.black_bits = (uint8_t) ((~result.raw_bits) &
         LINE_SENSOR_WHITE_LEVELS_EXPECTED);
-    result.left_on =
-        (result.black_bits & LINE_SENSOR_LEFT_GROUP_MASK) != 0U;
-    result.right_on =
-        (result.black_bits & LINE_SENSOR_RIGHT_GROUP_MASK) != 0U;
-    result.lost = !result.left_on && !result.right_on;
+    result.lost = result.black_bits == 0U;
     result.io_fault = false;
     return result;
 }

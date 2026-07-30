@@ -5,8 +5,8 @@
 
 const chassis_track_line_test_config_t
     g_chassis_track_line_test_default_config = {
-        {60.0f, 120.0f, 200.0f},
-        1000.0f,
+        {60.0f, 120.0f, 200.0f, 280.0f, 350.0f},
+        0.0f,
         400.0f,
         20.0f,
         20U,
@@ -50,7 +50,7 @@ static bool line_test_config_valid(
     if ((config == 0) || !line_test_float_valid(config->distance_mm) ||
         !line_test_float_valid(config->acceleration_mm_s2) ||
         !line_test_float_valid(config->stop_speed_mm_s) ||
-        (config->distance_mm <= 0.0f) ||
+        (config->distance_mm < 0.0f) ||
         (config->acceleration_mm_s2 <= 0.0f) ||
         (config->stop_speed_mm_s <= 0.0f) ||
         (config->control_period_ms == 0U) ||
@@ -185,18 +185,21 @@ ml_status_t chassis_track_line_test_update(
         if (test->progress_mm < 0.0f) {
             test->progress_mm = 0.0f;
         }
-        if (test->progress_mm >= test->config.distance_mm) {
+        if ((test->config.distance_mm > 0.0f) &&
+            (test->progress_mm >= test->config.distance_mm)) {
             test->state = CHASSIS_TRACK_LINE_TEST_BRAKING;
             test->commanded_speed_mm_s = 0.0f;
         } else {
-            remaining_mm = test->config.distance_mm -
-                test->progress_mm;
-            distance_speed_limit_mm_s = sqrtf(2.0f *
-                test->config.acceleration_mm_s2 * remaining_mm);
             target_speed_mm_s =
                 test->config.speed_mm_s[test->speed_index];
-            if (target_speed_mm_s > distance_speed_limit_mm_s) {
-                target_speed_mm_s = distance_speed_limit_mm_s;
+            if (test->config.distance_mm > 0.0f) {
+                remaining_mm = test->config.distance_mm -
+                    test->progress_mm;
+                distance_speed_limit_mm_s = sqrtf(2.0f *
+                    test->config.acceleration_mm_s2 * remaining_mm);
+                if (target_speed_mm_s > distance_speed_limit_mm_s) {
+                    target_speed_mm_s = distance_speed_limit_mm_s;
+                }
             }
             step_mm_s = test->config.acceleration_mm_s2 *
                 (float) test->config.control_period_ms / 1000.0f;
