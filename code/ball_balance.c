@@ -330,8 +330,8 @@ static bool ball_update_breakaway(void)
     uint32_t release_confirm_ms;
     uint32_t maximum_hold_ms;
 
-    arm_ms = (sequence_minus && g_ball.sequence_endpoint_captured) ?
-        BALL_SEQUENCE_MINUS_CAPTURE_BREAKAWAY_ARM_MS :
+    arm_ms = sequence_minus ?
+        BALL_SEQUENCE_MINUS_BREAKAWAY_ARM_MS :
         BALL_BREAKAWAY_ARM_MS;
 
     if (!ball_breakaway_is_available() ||
