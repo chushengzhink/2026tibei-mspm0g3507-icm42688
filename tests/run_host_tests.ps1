@@ -126,6 +126,34 @@ $cases = @(
         )
     },
     [pscustomobject]@{
+        Name = 'h456_mission_test'
+        Sources = @(
+            'tests/h456_mission_test.c',
+            'code/h456_mission.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'h456_telemetry_test'
+        Sources = @(
+            'tests/h456_telemetry_test.c',
+            'code/h456_telemetry.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'h456_app_test'
+        Arguments = @(
+            '-iquote', 'tests/h456_app_stubs',
+            '-include', 'tests/h456_app_stubs/prelude.h'
+        )
+        Sources = @(
+            'tests/h456_app_test.c',
+            'code/h456_app.c',
+            'code/h456_mission.c',
+            'code/h456_telemetry.c',
+            'code/chassis_key.c'
+        )
+    },
+    [pscustomobject]@{
         Name = 'pid_velocity_test'
         Sources = @(
             'tests/pid_velocity_test.c',

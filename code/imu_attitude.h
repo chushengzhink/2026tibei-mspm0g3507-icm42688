@@ -15,6 +15,7 @@ typedef enum {
 typedef struct {
     uint8_t source_axis[3];
     int8_t axis_sign[3];
+    uint16_t calibration_samples_required;
 } imu_attitude_config_t;
 
 typedef struct {
@@ -39,6 +40,7 @@ typedef struct {
     float gyro_m2[3];
     float accel_sum_g[3];
     uint16_t calibration_samples;
+    uint16_t calibration_samples_required;
     bool initialized;
     bool calibrated;
 } imu_attitude_t;

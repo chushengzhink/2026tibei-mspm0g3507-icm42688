@@ -34,6 +34,53 @@ static imu_attitude_calibration_status_t test_calibrate(
     return status;
 }
 
+static imu_attitude_calibration_status_t test_calibrate_samples(
+    imu_attitude_t *attitude, const icm42688_data_t *sample,
+    uint16_t samples)
+{
+    imu_attitude_calibration_status_t status =
+        IMU_ATTITUDE_CALIBRATION_INVALID;
+    uint16_t index;
+
+    for (index = 0U; index < samples; ++index) {
+        status = imu_attitude_calibration_update(attitude, sample);
+    }
+    return status;
+}
+
+static void test_calibration_sample_count_config(void)
+{
+    const icm42688_data_t still = {
+        0.0f, 0.0f, 1.0f,
+        0.0f, 0.0f, 0.0f
+    };
+    const imu_attitude_config_t custom = {
+        {IMU_ATTITUDE_AXIS_X, IMU_ATTITUDE_AXIS_Y, IMU_ATTITUDE_AXIS_Z},
+        {1, 1, 1},
+        150U
+    };
+    imu_attitude_t attitude;
+
+    test_check(imu_attitude_init(&attitude, 0) == ML_STATUS_OK,
+        "default calibration count test initialises");
+    test_check(test_calibrate_samples(
+        &attitude, &still, IMU_ATTITUDE_CALIBRATION_SAMPLES - 1U) ==
+        IMU_ATTITUDE_CALIBRATION_IN_PROGRESS,
+        "default calibration still waits before 300 samples");
+    test_check(imu_attitude_calibration_update(&attitude, &still) ==
+        IMU_ATTITUDE_CALIBRATION_COMPLETE,
+        "default calibration completes at 300 samples");
+
+    test_check(imu_attitude_init(&attitude, &custom) == ML_STATUS_OK,
+        "custom calibration count is accepted");
+    test_check(test_calibrate_samples(&attitude, &still, 149U) ==
+        IMU_ATTITUDE_CALIBRATION_IN_PROGRESS,
+        "custom calibration waits at 149 samples");
+    test_check(imu_attitude_calibration_update(&attitude, &still) ==
+        IMU_ATTITUDE_CALIBRATION_COMPLETE,
+        "custom calibration completes at 150 samples");
+}
+
 static void test_bias_and_yaw(void)
 {
     const icm42688_data_t still = {
@@ -114,7 +161,8 @@ static void test_movement_and_invalid_inputs(void)
     };
     const imu_attitude_config_t invalid_mapping = {
         {IMU_ATTITUDE_AXIS_X, IMU_ATTITUDE_AXIS_X, IMU_ATTITUDE_AXIS_Z},
-        {1, 1, 1}
+        {1, 1, 1},
+        0U
     };
     imu_attitude_t attitude;
     imu_attitude_angles_t angles;
@@ -160,7 +208,8 @@ static void test_axis_mapping(void)
 {
     const imu_attitude_config_t mapping = {
         {IMU_ATTITUDE_AXIS_X, IMU_ATTITUDE_AXIS_Y, IMU_ATTITUDE_AXIS_Z},
-        {-1, 1, -1}
+        {-1, 1, -1},
+        0U
     };
     const icm42688_data_t sample = {
         0.0f, 0.0f, -1.0f,
@@ -216,6 +265,7 @@ static void test_axis_mapping(void)
 
 int main(void)
 {
+    test_calibration_sample_count_config();
     test_bias_and_yaw();
     test_tilt_initialisation();
     test_movement_and_invalid_inputs();

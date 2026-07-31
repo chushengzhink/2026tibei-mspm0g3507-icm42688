@@ -69,7 +69,8 @@ static const icm42688_service_config_t g_track_imu_config = {
             IMU_ATTITUDE_AXIS_Y,
             IMU_ATTITUDE_AXIS_Z
         },
-        {-1, 1, -1}
+        {-1, 1, -1},
+        0U
     },
     TIMG8,
     1U

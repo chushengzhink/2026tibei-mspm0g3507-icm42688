@@ -6,7 +6,9 @@
 
 #include "ml_common.h"
 
+#ifndef CHASSIS_TELEMETRY_CAPACITY
 #define CHASSIS_TELEMETRY_CAPACITY (600U)
+#endif
 
 #define CHASSIS_TELEMETRY_LINE_USABLE          (0x01U)
 #define CHASSIS_TELEMETRY_LINE_RECOVERING      (0x02U)

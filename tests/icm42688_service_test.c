@@ -95,7 +95,8 @@ int main(void)
         {
             {IMU_ATTITUDE_AXIS_X, IMU_ATTITUDE_AXIS_Y,
              IMU_ATTITUDE_AXIS_Z},
-            {1, 1, 1}
+            {1, 1, 1},
+            0U
         },
         (GPTIMER_Regs *) 1,
         1U

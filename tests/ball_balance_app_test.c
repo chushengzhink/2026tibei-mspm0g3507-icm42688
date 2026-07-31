@@ -686,7 +686,7 @@ static void test_formal_vision_reacquire_and_abort(void)
     g_status.state = BALL_BALANCE_WAITING_FOR_VISION;
     g_status.control_mode = BALL_CONTROL_DISABLED;
     g_status.servo_target_us = BALL_SERVO_CENTER_US;
-    g_status.servo_current_us = 1550U;
+    g_status.servo_current_us = BALL_CONTROL_NEUTRAL_US;
     poll_count(10U);
     assert(strcmp(g_oled_lines[0], "BALL REACQUIRE  ") == 0);
     assert(g_telemetry_active);

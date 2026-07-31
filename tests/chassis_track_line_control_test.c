@@ -1034,6 +1034,23 @@ static void test_line_only_curve_exit_speed_scaling(void)
     }
 }
 
+static void test_h4_softened_config_passes_validation(void)
+{
+    chassis_track_line_control_t control = {0};
+    chassis_track_line_control_config_t config =
+        g_chassis_track_line_control_default_config;
+
+    config.correction_ratio = 0.18f;
+    config.maximum_correction_mm_s = 60.0f;
+    config.outer_single_correction_ratio = 0.28f;
+    config.outer_single_maximum_correction_mm_s = 80.0f;
+    config.curve_hold_correction_ratio = 0.18f;
+    config.curve_hold_maximum_correction_mm_s = 60.0f;
+    check(chassis_track_line_control_init(&control, &config) ==
+          ML_STATUS_OK,
+        "H4 softened LF04 config remains valid with curve hold capped");
+}
+
 static void test_invalid_input(void)
 {
     chassis_track_line_control_t control = {0};
@@ -1087,6 +1104,7 @@ int main(void)
     test_line_only_failed_curve_sequence_replay();
     test_line_only_curve_exit_confirmation();
     test_line_only_curve_exit_speed_scaling();
+    test_h4_softened_config_passes_validation();
     test_invalid_input();
     if (g_failures == 0) {
         puts("chassis track line control tests passed");

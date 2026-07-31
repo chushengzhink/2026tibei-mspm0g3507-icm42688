@@ -59,6 +59,7 @@
 #define BALL_SERVO_FREQUENCY_HZ           (50U)
 #define BALL_SERVO_MINIMUM_US             (1300U)
 #define BALL_SERVO_CENTER_US              (1500U)
+#define BALL_CONTROL_NEUTRAL_US           (1525U)
 #define BALL_SERVO_MAXIMUM_US             (1700U)
 #define BALL_SERVO_MAX_SLEW_US_PER_S      (2000UL)
 #define BALL_MANUAL_MAX_OFFSET_US         (100)
@@ -152,6 +153,11 @@
 #error Ball servo absolute range must remain within 1300 to 1700 us
 #endif
 
+#if (BALL_CONTROL_NEUTRAL_US < BALL_SERVO_MINIMUM_US) || \
+    (BALL_CONTROL_NEUTRAL_US > BALL_SERVO_MAXIMUM_US)
+#error Ball control neutral must remain inside the servo absolute range
+#endif
+
 #if (BALL_SEQUENCE_BREAKAWAY_SERVO_MINIMUM_US < \
      BALL_SERVO_MINIMUM_US) || \
     (BALL_BREAKAWAY_SERVO_MAXIMUM_US > BALL_SERVO_MAXIMUM_US) || \
@@ -161,7 +167,7 @@
 #endif
 
 #if (BALL_SEQUENCE_BREAKAWAY_STAGE1_SERVO_MAXIMUM_US < \
-     BALL_SERVO_CENTER_US) || \
+     BALL_CONTROL_NEUTRAL_US) || \
     (BALL_SEQUENCE_BREAKAWAY_STAGE1_SERVO_MAXIMUM_US > \
      BALL_SEQUENCE_BREAKAWAY_SERVO_MAXIMUM_US)
 #error Ball sequence negative stages must increase from center
@@ -169,7 +175,7 @@
 
 #if (BALL_SEQUENCE_BREAKAWAY_STAGE1_SERVO_MINIMUM_US < 1300U) || \
     (BALL_SEQUENCE_BREAKAWAY_STAGE1_SERVO_MINIMUM_US > \
-     BALL_SERVO_CENTER_US)
+     BALL_CONTROL_NEUTRAL_US)
 #error Ball sequence stage 1 must remain within 1300 us and center
 #endif
 

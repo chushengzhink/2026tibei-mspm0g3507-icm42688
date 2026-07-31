@@ -23,7 +23,8 @@ const imu_attitude_config_t imu_attitude_default_config = {
         IMU_ATTITUDE_AXIS_Y,
         IMU_ATTITUDE_AXIS_Z
     },
-    {1, 1, 1}
+    {1, 1, 1},
+    0U
 };
 
 static bool imu_attitude_float_valid(float value)
@@ -230,6 +231,10 @@ ml_status_t imu_attitude_init(
     }
 
     context->config = *config;
+    context->calibration_samples_required =
+        (config->calibration_samples_required == 0U) ?
+        IMU_ATTITUDE_CALIBRATION_SAMPLES :
+        config->calibration_samples_required;
     settings.sampleRate = IMU_ATTITUDE_SAMPLE_RATE_HZ;
     settings.convention = FusionConventionNwu;
     settings.gain = IMU_ATTITUDE_GAIN;
@@ -266,7 +271,7 @@ imu_attitude_calibration_status_t imu_attitude_calibration_update(
 
     imu_attitude_accumulate_calibration(context, accel_g, gyro_dps);
     if (context->calibration_samples <
-        IMU_ATTITUDE_CALIBRATION_SAMPLES) {
+        context->calibration_samples_required) {
         return IMU_ATTITUDE_CALIBRATION_IN_PROGRESS;
     }
     if (!imu_attitude_finish_calibration(context)) {
