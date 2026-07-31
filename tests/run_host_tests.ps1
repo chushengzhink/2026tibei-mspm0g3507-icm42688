@@ -177,6 +177,58 @@ $cases = @(
             'code/rds3230.c',
             'code/maix_ball_protocol.c'
         )
+    },
+    [pscustomobject]@{
+        Name = 'ball_telemetry_test'
+        Sources = @(
+            'tests/ball_telemetry_test.c',
+            'code/ball_telemetry.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'ball_balance_app_formal_test'
+        Arguments = @(
+            '-iquote', 'tests/ball_app_stubs',
+            '-DBALL_AUTO_CONTROL_MODE=0'
+        )
+        Sources = @(
+            'tests/ball_balance_app_test.c',
+            'code/ball_balance_app.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'ball_app_telemetry_integration_test'
+        Arguments = @(
+            '-iquote', 'tests/ball_app_stubs',
+            '-DBALL_AUTO_CONTROL_MODE=0'
+        )
+        Sources = @(
+            'tests/ball_app_telemetry_integration_test.c',
+            'code/ball_balance_app.c',
+            'code/ball_telemetry.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'ball_balance_app_center_test'
+        Arguments = @(
+            '-iquote', 'tests/ball_app_stubs',
+            '-DBALL_AUTO_CONTROL_MODE=2'
+        )
+        Sources = @(
+            'tests/ball_balance_app_test.c',
+            'code/ball_balance_app.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'ball_balance_app_speed_test'
+        Arguments = @(
+            '-iquote', 'tests/ball_app_stubs',
+            '-DBALL_AUTO_CONTROL_MODE=1'
+        )
+        Sources = @(
+            'tests/ball_balance_app_test.c',
+            'code/ball_balance_app.c'
+        )
     }
 )
 

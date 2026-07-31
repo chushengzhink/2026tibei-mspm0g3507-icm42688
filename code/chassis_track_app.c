@@ -252,8 +252,8 @@ static void track_show(const chassis_status_t *status)
         (void) snprintf(line, sizeof(line), "EST ERR %+04ldMM",
             (long) error_mm);
         track_show_line(3U, line);
-        track_show_line(4U, g_track_app.output.passed ?
-            "ENC+IMU PASS" : "ENC+IMU FAIL");
+        track_show_line(4U, chassis_track_result_text(
+            g_track_app.output.result));
     } else {
         if (g_track_app.line_gpio_fault) {
             track_show_line(1U, "LF GPIO FAULT");

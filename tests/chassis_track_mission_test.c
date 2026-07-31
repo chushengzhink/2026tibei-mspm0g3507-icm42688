@@ -55,6 +55,19 @@ static void start_mission(chassis_track_mission_t *mission,
         "center key start records encoder and fused-heading baselines");
 }
 
+static void complete_with_result(chassis_track_mission_t *mission,
+    float elapsed_s, float stop_error_mm, chassis_track_output_t *output)
+{
+    uint32_t elapsed_ms = (uint32_t) (elapsed_s * 1000.0f + 0.5f);
+
+    start_mission(mission, 0.0f, 0.0f);
+    mission->state = CHASSIS_TRACK_COMPLETE;
+    mission->stop_error_mm = stop_error_mm;
+    (void) chassis_track_mission_update(mission,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        100U + elapsed_ms, false, output);
+}
+
 static void test_start_and_route_geometry(void)
 {
     chassis_track_mission_t mission = {0};
@@ -81,14 +94,22 @@ static void test_start_and_route_geometry(void)
     check(near_value(g_chassis_track_default_config.
               finish_alignment_tolerance_deg, 1.0f, 0.001f) &&
         near_value(g_chassis_track_default_config.
+              finish_alignment_acceptance_tolerance_deg, 2.0f, 0.001f) &&
+        near_value(g_chassis_track_default_config.
               finish_alignment_heading_bias_deg, 37.0f, 0.001f) &&
         near_value(g_chassis_track_default_config.
               finish_alignment_max_start_error_deg, 45.0f, 0.001f) &&
+        near_value(g_chassis_track_default_config.
+              heading_control_kp, 4.0f, 0.001f) &&
+        near_value(g_chassis_track_default_config.
+              finish_alignment_heading_kp, 2.0f, 0.001f) &&
         g_chassis_track_default_config.finish_alignment_timeout_ms ==
             3000U &&
+        g_chassis_track_default_config.finish_alignment_settle_grace_ms ==
+            300U &&
         g_chassis_track_default_config.finish_alignment_confirm_cycles ==
             3U,
-        "finish alignment uses the calibrated one-degree safety window");
+        "finish alignment separates capture, stopped acceptance, and gain");
     check(near_value(g_chassis_track_default_config.
               straight_cruise_speed_mm_s,
               TEST_STRAIGHT_CRUISE_MM_S, 0.001f) &&
@@ -105,6 +126,59 @@ static void test_start_and_route_geometry(void)
     check(near_value(output.progress_mm, 100.0f, 0.001f) &&
         near_value(output.heading_progress_deg, 10.0f, 0.001f),
         "progress is relative to the encoder and heading start snapshot");
+}
+
+static void test_finish_result_reasons(void)
+{
+    chassis_track_mission_t mission = {0};
+    chassis_track_output_t output;
+
+    complete_with_result(&mission, 20.0f, 20.0f, &output);
+    check(output.finished && output.passed &&
+        output.result == CHASSIS_TRACK_RESULT_PASS &&
+        strcmp(chassis_track_result_text(output.result),
+            "LAP CHECK PASS  ") == 0,
+        "20.00 seconds and positive 20.00 mm are inclusive pass bounds");
+
+    complete_with_result(&mission, 20.0f, -20.0f, &output);
+    check(output.passed && output.result == CHASSIS_TRACK_RESULT_PASS,
+        "negative 20.00 mm is also an inclusive pass bound");
+
+    complete_with_result(&mission, 20.01f, 20.0f, &output);
+    check(!output.passed &&
+        output.result == CHASSIS_TRACK_RESULT_TIME_LIMIT &&
+        strcmp(chassis_track_result_text(output.result),
+            "TIME LIMIT FAIL ") == 0,
+        "20.01 seconds reports only the time limit failure");
+
+    complete_with_result(&mission, 20.0f, 20.01f, &output);
+    check(!output.passed &&
+        output.result == CHASSIS_TRACK_RESULT_EST_POSITION &&
+        strcmp(chassis_track_result_text(output.result),
+            "EST POS FAIL    ") == 0,
+        "positive 20.01 mm reports only estimated position failure");
+
+    complete_with_result(&mission, 20.0f, -20.01f, &output);
+    check(output.result == CHASSIS_TRACK_RESULT_EST_POSITION,
+        "negative 20.01 mm reports estimated position failure symmetrically");
+
+    complete_with_result(&mission, 20.01f, 20.01f, &output);
+    check(output.result == CHASSIS_TRACK_RESULT_TIME_AND_POSITION &&
+        strcmp(chassis_track_result_text(output.result),
+            "TIME+POS FAIL   ") == 0,
+        "simultaneous limit failures have an explicit combined result");
+
+    complete_with_result(&mission, 18.90f, 21.0f, &output);
+    check(output.result == CHASSIS_TRACK_RESULT_EST_POSITION &&
+        strcmp(chassis_track_result_text(output.result),
+            "EST POS FAIL    ") == 0,
+        "latest 18.90-second plus-21-mm lap is not mislabeled as IMU failure");
+
+    start_mission(&mission, 0.0f, 0.0f);
+    (void) chassis_track_mission_update(&mission,
+        0.0f, 0.0f, 0.0f, 0.0f, 120U, false, &output);
+    check(output.result == CHASSIS_TRACK_RESULT_PENDING,
+        "unfinished laps retain a pending result");
 }
 
 static void test_expected_heading_profile(void)
@@ -375,7 +449,27 @@ static void test_nonzero_start_heading_reference(void)
     check(output.finished &&
         strcmp(chassis_track_state_text(CHASSIS_TRACK_ALIGNING),
             "ALIGN TO START  ") == 0,
-        "alignment completes at the bias-compensated start orientation");
+        "443 through 445 degrees form the nonzero-start capture window");
+
+    enter_alignment_from_start(&mission, 47.0f, 443.0f, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 442.0f,
+        180U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 442.0f,
+        200U, false, &output);
+    check(output.finished,
+        "442 degrees is the inclusive stopped acceptance boundary");
+
+    enter_alignment_from_start(&mission, 47.0f, 445.0f, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 446.0f,
+        180U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 446.0f,
+        200U, false, &output);
+    check(output.finished,
+        "446 degrees is the inclusive stopped acceptance boundary");
 
     start_mission(&mission, 0.0f, 47.0f);
     (void) chassis_track_mission_update(&mission,
@@ -398,49 +492,82 @@ static void test_alignment_direction_window_and_stop_confirmation(void)
     check(output.state == CHASSIS_TRACK_ALIGNING &&
         !output.command_stop &&
         near_value(output.angular_rad_s, 0.35f, 0.001f),
-        "360 degrees starts limited positive biased alignment");
+        "large alignment errors retain the 0.35-rad/s safety limit");
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 396.0f,
+        finish_reference, 30.0f, -30.0f, 396.0f,
         180U, false, &output);
-    (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 398.0f,
-        200U, false, &output);
-    check(mission.alignment_confirm_cycles == 2U &&
+    check(mission.alignment_settling &&
+        mission.alignment_confirm_cycles == 0U &&
         near_value(output.angular_rad_s, 0.0f, 0.001f),
-        "396 and 398 degree boundaries are inside the alignment window");
+        "entering the one-degree capture window latches motor stop");
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 20.0f, 397.0f,
+        finish_reference, 30.0f, -30.0f, 400.26f,
+        200U, false, &output);
+    check(mission.alignment_settling &&
+        mission.alignment_confirm_cycles == 0U &&
+        near_value(output.angular_rad_s, 0.0f, 0.001f),
+        "coasting outside the window cannot immediately reverse the motors");
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 400.26f,
         220U, false, &output);
-    check(mission.alignment_confirm_cycles == 0U,
-        "either wheel at 20 mm/s resets alignment stop confirmation");
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 397.0f,
+        finish_reference, 0.0f, 0.0f, 400.26f,
         240U, false, &output);
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 395.99f,
+        finish_reference, 0.0f, 0.0f, 400.26f,
         260U, false, &output);
-    check(mission.alignment_confirm_cycles == 0U &&
-        output.angular_rad_s > 0.0f,
-        "395.99 degrees restarts positive heading correction");
+    check(!mission.alignment_settling && !output.finished &&
+        near_value(output.angular_rad_s, 0.0f, 0.001f),
+        "stopped error beyond two degrees releases the settle latch");
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 398.01f,
+        finish_reference, 0.0f, 0.0f, 400.26f,
         280U, false, &output);
-    check(mission.alignment_confirm_cycles == 0U &&
+    check(!mission.alignment_settling &&
         output.angular_rad_s < 0.0f,
-        "398.01 degrees restarts negative heading correction");
+        "a stopped overshoot starts negative correction on the next cycle");
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 396.0f,
+        finish_reference, 30.0f, -30.0f, 398.0f,
         300U, false, &output);
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 398.0f,
+        finish_reference, 0.0f, 0.0f, 399.0f,
         320U, false, &output);
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 397.0f,
+        finish_reference, 0.0f, 0.0f, 399.0f,
         340U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 399.0f,
+        360U, false, &output);
     check(output.finished && output.state == CHASSIS_TRACK_COMPLETE &&
-        mission.stop_time_ms == 340U &&
-        near_value(output.elapsed_s, 0.240f, 0.0001f),
-        "third aligned stopped cycle records the final lap time");
+        mission.stop_time_ms == 360U &&
+        near_value(output.elapsed_s, 0.260f, 0.0001f),
+        "the positive two-degree stopped boundary completes after three cycles");
+
+    enter_alignment(&mission, 395.99f, &output);
+    check(!mission.alignment_settling && output.angular_rad_s > 0.0f,
+        "395.99 degrees remains outside the one-degree capture window");
+    enter_alignment(&mission, 398.01f, &output);
+    check(!mission.alignment_settling && output.angular_rad_s < 0.0f,
+        "398.01 degrees remains outside the one-degree capture window");
+
+    enter_alignment(&mission, 396.0f, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 394.99f,
+        180U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 394.99f,
+        200U, false, &output);
+    check(!output.finished && !mission.alignment_settling,
+        "394.99 degrees is outside the stopped acceptance window");
+
+    enter_alignment(&mission, 398.0f, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 399.01f,
+        180U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 399.01f,
+        200U, false, &output);
+    check(!output.finished && !mission.alignment_settling,
+        "399.01 degrees is outside the stopped acceptance window");
 }
 
 static void test_alignment_faults_and_emergency(void)
@@ -475,6 +602,62 @@ static void test_alignment_faults_and_emergency(void)
     check(output.state == CHASSIS_TRACK_FAULT_EMERGENCY &&
         output.command_stop,
         "center-key emergency remains active during alignment");
+}
+
+static void test_alignment_settle_timeout_grace(void)
+{
+    chassis_track_mission_t mission = {0};
+    chassis_track_output_t output;
+    float finish_reference = g_chassis_track_default_config.
+        finish_reference_progress_mm;
+
+    enter_alignment(&mission, 360.0f, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 30.0f, -30.0f, 397.0f,
+        3160U, false, &output);
+    check(output.state == CHASSIS_TRACK_ALIGNING &&
+        mission.alignment_settling &&
+        near_value(output.angular_rad_s, 0.0f, 0.001f),
+        "capture at the active deadline enters stopped settling");
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 398.5f,
+        3180U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 398.5f,
+        3200U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 398.5f,
+        3220U, false, &output);
+    check(output.finished,
+        "stopped acceptance can complete inside the 300-ms grace");
+
+    enter_alignment(&mission, 396.0f, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 30.0f, -30.0f, 396.0f,
+        180U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 30.0f, -30.0f, 396.0f,
+        3460U, false, &output);
+    check(output.state == CHASSIS_TRACK_FAULT_ALIGNMENT &&
+        output.command_stop,
+        "failure to stop by the 300-ms grace deadline locks the motors");
+
+    enter_alignment(&mission, 396.0f, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 30.0f, -30.0f, 400.0f,
+        3140U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 400.0f,
+        3160U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 400.0f,
+        3180U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 400.0f,
+        3200U, false, &output);
+    check(output.state == CHASSIS_TRACK_FAULT_ALIGNMENT &&
+        output.command_stop,
+        "stopped error beyond two degrees cannot restart after timeout");
 }
 
 static void test_alignment_time_over_pass_limit(void)
@@ -582,33 +765,58 @@ static void test_latest_tight_alignment_replay(void)
     float finish_reference = g_chassis_track_default_config.
         finish_reference_progress_mm;
 
-    enter_alignment_from_start(&mission, 0.01f, 385.12f, &output);
+    enter_alignment_from_start(&mission, 0.0f, 389.62f, &output);
     check(output.state == CHASSIS_TRACK_ALIGNING &&
         output.angular_rad_s > 0.0f &&
-        near_value(output.heading_error_deg, 11.89f, 0.02f),
-        "latest CSV first stop still turns right toward 397 degrees");
+        near_value(output.angular_rad_s, 0.2576f, 0.002f) &&
+        near_value(output.heading_error_deg, 7.38f, 0.02f),
+        "fault CSV starts alignment with the lower dedicated gain");
 
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 398.71f,
+        finish_reference, 30.0f, -30.0f, 395.12f,
         180U, false, &output);
-    check(!output.finished &&
-        mission.alignment_confirm_cycles == 0U &&
-        near_value(output.heading_error_deg, -1.70f, 0.02f) &&
-        output.angular_rad_s < 0.0f,
-        "latest 398.71-degree overshoot must correct left");
+    check(!mission.alignment_settling &&
+        near_value(output.angular_rad_s, 0.0656f, 0.002f),
+        "fault CSV slows before entering the one-degree capture window");
 
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 396.01f,
+        finish_reference, 30.0f, -30.0f, 397.0f,
         200U, false, &output);
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 398.01f,
+        finish_reference, 30.0f, -30.0f, 400.26f,
         220U, false, &output);
+    check(mission.alignment_settling &&
+        near_value(output.angular_rad_s, 0.0f, 0.001f),
+        "fault CSV overshoot remains motor-off while wheels are moving");
     (void) chassis_track_mission_update(&mission,
-        finish_reference, 0.0f, 0.0f, 397.01f,
+        finish_reference, 0.0f, 0.0f, 400.26f,
         240U, false, &output);
-    check(output.finished && output.command_stop &&
-        near_value(output.heading_progress_deg, 397.0f, 0.02f),
-        "latest replay completes only inside the one-degree window");
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 400.26f,
+        260U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 400.26f,
+        280U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 400.26f,
+        300U, false, &output);
+    check(!mission.alignment_settling && output.angular_rad_s < 0.0f,
+        "fault CSV restarts left correction only after full stop");
+
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 30.0f, -30.0f, 398.0f,
+        320U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 399.0f,
+        340U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 399.0f,
+        360U, false, &output);
+    (void) chassis_track_mission_update(&mission,
+        finish_reference, 0.0f, 0.0f, 399.0f,
+        380U, false, &output);
+    check(output.finished && output.command_stop,
+        "fault replay completes after stopped two-degree acceptance");
 }
 
 static void test_finish_reference_validation(void)
@@ -626,6 +834,26 @@ static void test_finish_reference_validation(void)
     check(chassis_track_mission_init(&mission, &config) ==
         ML_STATUS_INVALID_ARGUMENT,
         "alignment tolerance must be positive");
+    config = g_chassis_track_default_config;
+    config.finish_alignment_acceptance_tolerance_deg = 0.5f;
+    check(chassis_track_mission_init(&mission, &config) ==
+        ML_STATUS_INVALID_ARGUMENT,
+        "stopped acceptance cannot be tighter than the capture window");
+    config = g_chassis_track_default_config;
+    config.finish_alignment_acceptance_tolerance_deg = 5.1f;
+    check(chassis_track_mission_init(&mission, &config) ==
+        ML_STATUS_INVALID_ARGUMENT,
+        "stopped acceptance stays inside the finish heading tolerance");
+    config = g_chassis_track_default_config;
+    config.finish_alignment_heading_kp = 0.0f;
+    check(chassis_track_mission_init(&mission, &config) ==
+        ML_STATUS_INVALID_ARGUMENT,
+        "alignment-specific heading gain must be positive");
+    config = g_chassis_track_default_config;
+    config.finish_alignment_settle_grace_ms = 40U;
+    check(chassis_track_mission_init(&mission, &config) ==
+        ML_STATUS_INVALID_ARGUMENT,
+        "settle grace must fit all stopped confirmation cycles");
     config = g_chassis_track_default_config;
     config.finish_alignment_heading_bias_deg = 180.0f;
     check(chassis_track_mission_init(&mission, &config) ==
@@ -730,6 +958,7 @@ static void test_lap_mismatch_and_emergency(void)
 int main(void)
 {
     test_start_and_route_geometry();
+    test_finish_result_reasons();
     test_expected_heading_profile();
     test_heading_feedback();
     test_second_curve_fusion_replay();
@@ -738,6 +967,7 @@ int main(void)
     test_nonzero_start_heading_reference();
     test_alignment_direction_window_and_stop_confirmation();
     test_alignment_faults_and_emergency();
+    test_alignment_settle_timeout_grace();
     test_alignment_time_over_pass_limit();
     test_latest_finish_replay();
     test_latest_alignment_bias_replay();

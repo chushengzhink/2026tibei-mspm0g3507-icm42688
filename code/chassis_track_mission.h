@@ -22,6 +22,14 @@ typedef enum {
     CHASSIS_TRACK_FAULT_EMERGENCY
 } chassis_track_state_t;
 
+typedef enum {
+    CHASSIS_TRACK_RESULT_PENDING = 0,
+    CHASSIS_TRACK_RESULT_PASS,
+    CHASSIS_TRACK_RESULT_TIME_LIMIT,
+    CHASSIS_TRACK_RESULT_EST_POSITION,
+    CHASSIS_TRACK_RESULT_TIME_AND_POSITION
+} chassis_track_result_t;
+
 typedef struct {
     float straight_length_mm;
     float curve_radius_mm;
@@ -36,15 +44,18 @@ typedef struct {
     float finish_heading_target_deg;
     float finish_heading_tolerance_deg;
     float finish_alignment_tolerance_deg;
+    float finish_alignment_acceptance_tolerance_deg;
     float finish_alignment_heading_bias_deg;
     float finish_alignment_max_start_error_deg;
     float heading_control_kp;
+    float finish_alignment_heading_kp;
     float maximum_heading_correction_rad_s;
     float stop_speed_mm_s;
     float pass_time_s;
     float pass_error_mm;
     uint16_t control_period_ms;
     uint16_t finish_alignment_timeout_ms;
+    uint16_t finish_alignment_settle_grace_ms;
     uint8_t finish_heading_confirm_cycles;
     uint8_t finish_alignment_confirm_cycles;
     uint8_t stopped_cycles_required;
@@ -72,6 +83,7 @@ typedef struct {
     uint8_t stopped_cycles;
     bool distance_gate_met;
     bool heading_gate_met;
+    bool alignment_settling;
     bool initialized;
 } chassis_track_mission_t;
 
@@ -87,6 +99,7 @@ typedef struct {
     float heading_feedback_rad_s;
     float heading_error_deg;
     chassis_track_state_t state;
+    chassis_track_result_t result;
     bool command_stop;
     bool finished;
     bool passed;
@@ -107,5 +120,6 @@ ml_status_t chassis_track_mission_update(chassis_track_mission_t *mission,
     uint32_t now_ms, bool emergency_stop,
     chassis_track_output_t *output);
 const char *chassis_track_state_text(chassis_track_state_t state);
+const char *chassis_track_result_text(chassis_track_result_t result);
 
 #endif

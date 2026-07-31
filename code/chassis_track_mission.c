@@ -39,15 +39,18 @@ const chassis_track_config_t g_chassis_track_default_config = {
     360.0f,
     5.0f,
     1.0f,
+    2.0f,
     37.0f,
     45.0f,
     4.0f,
+    2.0f,
     0.35f,
     20.0f,
     20.0f,
     20.0f,
     20U,
     3000U,
+    300U,
     3U,
     3U,
     3U
@@ -143,9 +146,11 @@ static bool track_config_valid(const chassis_track_config_t *config)
         track_finite(config->finish_heading_target_deg) &&
         track_finite(config->finish_heading_tolerance_deg) &&
         track_finite(config->finish_alignment_tolerance_deg) &&
+        track_finite(config->finish_alignment_acceptance_tolerance_deg) &&
         track_finite(config->finish_alignment_heading_bias_deg) &&
         track_finite(config->finish_alignment_max_start_error_deg) &&
         track_finite(config->heading_control_kp) &&
+        track_finite(config->finish_alignment_heading_kp) &&
         track_finite(config->maximum_heading_correction_rad_s) &&
         (config->straight_length_mm > 0.0f) &&
         (config->curve_radius_mm > 0.0f) &&
@@ -170,15 +175,21 @@ static bool track_config_valid(const chassis_track_config_t *config)
          config->finish_heading_target_deg) &&
         (config->finish_alignment_tolerance_deg > 0.0f) &&
         (config->finish_alignment_tolerance_deg <=
+         config->finish_alignment_acceptance_tolerance_deg) &&
+        (config->finish_alignment_acceptance_tolerance_deg <=
          config->finish_heading_tolerance_deg) &&
         (track_abs(config->finish_alignment_heading_bias_deg) < 180.0f) &&
         (config->finish_alignment_max_start_error_deg >
-         config->finish_alignment_tolerance_deg) &&
+         config->finish_alignment_acceptance_tolerance_deg) &&
         (config->finish_alignment_max_start_error_deg < 180.0f) &&
         (config->heading_control_kp >= 0.0f) &&
+        (config->finish_alignment_heading_kp > 0.0f) &&
         (config->maximum_heading_correction_rad_s > 0.0f) &&
         (config->control_period_ms > 0U) &&
         (config->finish_alignment_timeout_ms > 0U) &&
+        ((uint32_t) config->finish_alignment_settle_grace_ms >=
+         (uint32_t) config->control_period_ms *
+             (uint32_t) config->finish_alignment_confirm_cycles) &&
         (config->finish_heading_confirm_cycles > 0U) &&
         (config->finish_alignment_confirm_cycles > 0U) &&
         (config->stopped_cycles_required > 0U);
@@ -211,6 +222,7 @@ ml_status_t chassis_track_mission_init(chassis_track_mission_t *mission,
     mission->stopped_cycles = 0U;
     mission->distance_gate_met = false;
     mission->heading_gate_met = false;
+    mission->alignment_settling = false;
     mission->initialized = true;
     return ML_STATUS_OK;
 }
@@ -246,6 +258,7 @@ ml_status_t chassis_track_mission_start(chassis_track_mission_t *mission,
     mission->stopped_cycles = 0U;
     mission->distance_gate_met = false;
     mission->heading_gate_met = false;
+    mission->alignment_settling = false;
     return ML_STATUS_OK;
 }
 
@@ -333,6 +346,9 @@ static float track_expected_heading_rad(
 static void track_fill_output(const chassis_track_mission_t *mission,
     chassis_track_output_t *output)
 {
+    bool position_passed;
+    bool time_passed;
+
     output->progress_mm = mission->progress_mm;
     output->elapsed_s = mission->elapsed_s;
     output->stop_error_mm = mission->stop_error_mm;
@@ -346,10 +362,21 @@ static void track_fill_output(const chassis_track_mission_t *mission,
     output->state = mission->state;
     output->finished = mission->state == CHASSIS_TRACK_COMPLETE;
     output->command_stop = !track_state_commands_motion(mission->state);
-    output->passed = output->finished &&
-        (mission->elapsed_s <= mission->config.pass_time_s) &&
-        (track_abs(mission->stop_error_mm) <=
-         mission->config.pass_error_mm);
+    time_passed = mission->elapsed_s <= mission->config.pass_time_s;
+    position_passed = track_abs(mission->stop_error_mm) <=
+        mission->config.pass_error_mm;
+    if (!output->finished) {
+        output->result = CHASSIS_TRACK_RESULT_PENDING;
+    } else if (time_passed && position_passed) {
+        output->result = CHASSIS_TRACK_RESULT_PASS;
+    } else if (!time_passed && !position_passed) {
+        output->result = CHASSIS_TRACK_RESULT_TIME_AND_POSITION;
+    } else if (!time_passed) {
+        output->result = CHASSIS_TRACK_RESULT_TIME_LIMIT;
+    } else {
+        output->result = CHASSIS_TRACK_RESULT_EST_POSITION;
+    }
+    output->passed = output->result == CHASSIS_TRACK_RESULT_PASS;
     output->distance_gate_met = mission->distance_gate_met;
     output->heading_gate_met = mission->heading_gate_met;
 }
@@ -369,6 +396,7 @@ ml_status_t chassis_track_mission_update(chassis_track_mission_t *mission,
     float omega_heading;
     float brake_distance;
     float heading_arm_progress;
+    uint32_t alignment_elapsed_ms;
     float alignment_error_rad;
 
     if ((mission == 0) || !mission->initialized) {
@@ -499,6 +527,7 @@ ml_status_t chassis_track_mission_update(chassis_track_mission_t *mission,
             } else {
                 mission->state = CHASSIS_TRACK_ALIGNING;
                 mission->alignment_start_time_ms = now_ms;
+                mission->alignment_settling = false;
             }
         }
     }
@@ -517,12 +546,15 @@ ml_status_t chassis_track_mission_update(chassis_track_mission_t *mission,
         output->linear_mm_s = 0.0f;
         output->angular_rad_s = 0.0f;
 
-        if ((uint32_t) (now_ms - mission->alignment_start_time_ms) >=
-            mission->config.finish_alignment_timeout_ms) {
-            mission->state = CHASSIS_TRACK_FAULT_ALIGNMENT;
-        } else if (track_abs(mission->heading_error_deg) <=
-                   mission->config.finish_alignment_tolerance_deg +
-                       0.0001f) {
+        alignment_elapsed_ms = (uint32_t) (now_ms -
+            mission->alignment_start_time_ms);
+        if (!mission->alignment_settling &&
+            (track_abs(mission->heading_error_deg) <=
+             mission->config.finish_alignment_tolerance_deg + 0.0001f)) {
+            mission->alignment_settling = true;
+            mission->alignment_confirm_cycles = 0U;
+        }
+        if (mission->alignment_settling) {
             if ((track_abs(measured_left_mm_s) <
                  mission->config.stop_speed_mm_s) &&
                 (track_abs(measured_right_mm_s) <
@@ -535,17 +567,39 @@ ml_status_t chassis_track_mission_update(chassis_track_mission_t *mission,
             }
             if (mission->alignment_confirm_cycles >=
                 mission->config.finish_alignment_confirm_cycles) {
-                mission->state = CHASSIS_TRACK_COMPLETE;
-                mission->stop_time_ms = now_ms;
-                mission->elapsed_s = (float) ((uint32_t) (now_ms -
-                    mission->start_time_ms)) / 1000.0f;
-                mission->stop_error_mm = mission->progress_mm -
-                    mission->config.finish_reference_progress_mm;
+                if (track_abs(mission->heading_error_deg) <=
+                    mission->config.
+                    finish_alignment_acceptance_tolerance_deg + 0.0001f) {
+                    mission->state = CHASSIS_TRACK_COMPLETE;
+                    mission->stop_time_ms = now_ms;
+                    mission->elapsed_s = (float) ((uint32_t) (now_ms -
+                        mission->start_time_ms)) / 1000.0f;
+                    mission->stop_error_mm = mission->progress_mm -
+                        mission->config.finish_reference_progress_mm;
+                } else if (alignment_elapsed_ms >=
+                           mission->config.finish_alignment_timeout_ms) {
+                    mission->state = CHASSIS_TRACK_FAULT_ALIGNMENT;
+                } else {
+                    mission->alignment_settling = false;
+                    mission->alignment_confirm_cycles = 0U;
+                }
             }
+            if ((mission->state == CHASSIS_TRACK_ALIGNING) &&
+                mission->alignment_settling &&
+                (alignment_elapsed_ms >=
+                 (uint32_t) mission->config.finish_alignment_timeout_ms +
+                     (uint32_t) mission->config.
+                     finish_alignment_settle_grace_ms)) {
+                mission->state = CHASSIS_TRACK_FAULT_ALIGNMENT;
+            }
+        } else if (alignment_elapsed_ms >=
+                   mission->config.finish_alignment_timeout_ms) {
+            mission->state = CHASSIS_TRACK_FAULT_ALIGNMENT;
         } else {
             mission->alignment_confirm_cycles = 0U;
             omega_heading = track_clamp(
-                mission->config.heading_control_kp * alignment_error_rad,
+                mission->config.finish_alignment_heading_kp *
+                    alignment_error_rad,
                 mission->config.maximum_heading_correction_rad_s);
             mission->heading_feedback_rad_s = omega_heading;
             output->angular_rad_s = omega_heading;
@@ -572,5 +626,18 @@ const char *chassis_track_state_text(chassis_track_state_t state)
         case CHASSIS_TRACK_FAULT_ALIGNMENT: return "FAULT ALIGN     ";
         case CHASSIS_TRACK_FAULT_EMERGENCY: return "EMERGENCY STOP  ";
         default: return "TRACK ERROR     ";
+    }
+}
+
+const char *chassis_track_result_text(chassis_track_result_t result)
+{
+    switch (result) {
+        case CHASSIS_TRACK_RESULT_PENDING: return "LAP CHECK WAIT  ";
+        case CHASSIS_TRACK_RESULT_PASS: return "LAP CHECK PASS  ";
+        case CHASSIS_TRACK_RESULT_TIME_LIMIT: return "TIME LIMIT FAIL ";
+        case CHASSIS_TRACK_RESULT_EST_POSITION: return "EST POS FAIL    ";
+        case CHASSIS_TRACK_RESULT_TIME_AND_POSITION:
+            return "TIME+POS FAIL   ";
+        default: return "LAP RESULT ERR  ";
     }
 }

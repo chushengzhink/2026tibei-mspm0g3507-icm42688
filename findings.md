@@ -1,5 +1,48 @@
 # Findings & Decisions
 
+## Phase 29 第三问恢复安全边界
+
+- 三份1000 us正式脱困CSV均未进入`TO_MINUS_5`，在5000 ms停留于`TO_PLUS_5`并超时；位置峰值分别为+8.372/+12.392/+11.961 cm，速度峰值约14.57/21.49/21.94 cm/s。
+- 三次脱困都实际请求并到达1000 us；释放后普通速度P项已经远超±200 us控制限幅，继续增加位置环或速度环增益不能抵消过强脱困冲量。
+- 第2/3次在接近+12 cm时触发约220 ms失视回中，进一步证明当前首要问题是1000 us脱困边界，不是PID制动力不足。
+- 用户明确撤销正式1000 us例外，恢复全路径1300–1700 us；本轮不修改P/D/I、观察器、序列判定、5秒门、Maix或遥测布局。
+- 第三题按`O→+5 cm→-5 cm稳定`整段≤5秒验收；+5只需进入±1 cm范围并确认30 ms后折返，不要求低速，最终-5继续使用低速500 ms稳定门。
+
+## Phase 30 第三问+5折返门修正
+
+- 恢复1300 us后的三份CSV中，第1/3次已到达+5.322/+4.495 cm，但以8.12/6.20 cm/s进入允许带，旧共用低速门拒绝折返；第2次最高+3.419 cm。
+- 用户选择保持1300–1700 us，不降低舵机下限；+5改为±1 cm内连续30 ms位置确认且不检查速度，最终-5仍要求±1 cm、≤1 cm/s连续500 ms。
+- 本轮不修改位置/速度PID、脱困、观察器、5000 ms总超时、Maix、CSV或RAM布局，也不执行任何回归或构建检查。
+
+
+## Phase 26 新球位置D增阻尼与端点低速确认
+- 三份26列CSV均确认默认独立极限制动已关闭：活动段10 ms连续、视觉年龄最大60 ms、`brake_active=0`。
+- 第1次最高+4.175 cm后振荡并超时；第3次进入+5允许区仅140 ms，速度峰值+7.71/-8.44 cm/s，同样超时。
+- 第2次在4060 ms进入COMPLETE，但+5计时结束时速度约+5.59 cm/s，-5过程中最低-15.71 cm/s；完成后同时满足±1 cm和|速度|<=1 cm/s仅10 ms，随后在-6.88到-1.20 cm继续振荡。
+- 当前端点稳定计时只检查位置，必须增加统一`|velocity|<=1.0 cm/s`门，任一条件越界即清除计时。
+- 用户确认当前新球为后续正式基线，并选择只把位置D从0.20提高到0.40；P/I、速度环、直接150 us脱困、5 s、舵机边界和Maix均保持不变，D回退值为0.20。
+
+## Phase 24 正式最大脱困与超速强制制动
+- 两份100 us/s正式CSV均在5000 ms TIMEOUT；第一次3220 ms近似静止、第二次末段仅到98/150 us和1335 us，滚动本身不是主要耗时。
+- 用户锁定正式正负阶段均在300 ms后直接施加150 us；中心调试仍使用50 us/s，关闭直接加力开关时回退到正式100 us/s。
+- 用户锁定超速制动进入/退出差值为0.5/0.1 cm/s；+5制动目标1650 us、-5制动目标1300 us，制动期间冻结位置积分。
+- CSV增加`brake_active`；可把脱困与制动活动位封装到现有`breakaway_active`字节，保持紧凑记录44字节和26400字节RAM区不变。
+- 控制器的`ball_reset_pid_state()`已被停用、折返、失视回中、重捕获和目标重设共同调用；把制动标志纳入该函数即可覆盖全部安全清零路径。
+- 超速判定必须在位置环首次计算目标速度后、积分提交前执行，使制动当周期即可冻结积分；最终控制输出阶段再用阶段对应边界覆盖普通PID。
+- 现有正式测试固定期望首周期1 us和后续21 us，需要更新为直接150 us；中心0.5/10.5 us断言必须保持不变。
+- 遥测记录尾部已有单字节`breakaway_active`，可改为flags位0=breakaway、位1=brake，`breakaway_fault`继续独立字节，结构尺寸不变。
+
+
+## Phase 20 自动0 cm位置P外环
+- 当前实现只切换自动控制模式：默认连续3帧视觉有效后目标设为0 cm并进入完整串级控制；PID数值保持位置1.6/0/0、速度25/0。
+- 速度内环实测只证明球能减速停止且无持续往复；停在+2～+4 cm符合速度目标0的预期，不能据此声明中心精度或第3题性能达标。
+- 两个交互式μVision窗口仍在运行；只能在现有project_ball窗口执行Rebuild，不启动新的UV4进程。
+
+## Phase 21 位置P降档与UART0 CSV
+- 实机确认位置符号正确且球反复过零；OLED `P+090`表示+9.0 cm，`U1700`表示舵机达到当前1700 us软件上限，因此本轮只把位置P从1.6降至0.8。
+- UART0固定PA10/PA11、115200 8N1，可与UART2并存；杆球构建当前屏蔽UART0 ISR，需恢复但不得引入底盘遥测模块。
+- 选择10 ms×600条、完整PID+视觉字段、PB24中止且舵机回到1500 us后才允许D/C；运行和回中期间不得阻塞导出。
+
 ## Requirements
 - Phase 19杆球固件必须是独立工程；不得编译或初始化底盘、电机、编码器、LF04和IMU，PB24仍是唯一会触发杆球动作的按键。
 - 杆球新增资源锁定为PB27/PINCM58/TIMA1_CCP1、UART2 PB15/PB16和TIMG6 1 ms；现有底盘工程与40%绝对PWM限制不得改变。
@@ -190,3 +233,53 @@
 - Restoring `22d672e` arbitration makes nonzero LF04 direction authoritative: opposite route/heading assistance is discarded, same-direction assistance may fill to the existing 90/120 mm/s cap, and B0 preserves the last confirmed recovery direction.
 - Split route/heading/final telemetry, the 360 +/- 5 degree three-cycle finish gate, the 36 mm stop lead, and all lower safety limits remain.
 - The public telemetry record remains 52 bytes and CSV remains 27 columns, but 600 RAM entries use an internal 44-byte representation to resolve the observed `0xC10` SRAM link overflow.
+
+## Phase 22 Formal Ball Sequence Switch
+- `BALL_BALANCE_ALLOW_SEQUENCE=1` is already enabled; the only configuration switch needed for the formal PB24 entry is `BALL_AUTO_CONTROL_MODE=BALL_AUTO_CONTROL_DISABLED`.
+- In the current application, UART0 ball telemetry is compiled and initialized only for automatic calibration modes, so a config-only switch would lose the established CSV workflow.
+- The disabled/formal branch currently refreshes four software-I2C OLED lines every 100 ms during active control, which would reintroduce the previously measured approximately 80 ms PID stalls.
+- PB24 currently aborts only `TO_PLUS_5`/`TO_MINUS_5`; after `COMPLETE` the controller intentionally remains enabled at -5 cm and the application has no PB24 path to recenter.
+- Core breakaway assistance is already isolated from scoring by requiring `sequence_state==IDLE` and target 0 cm; formal sequence behavior can remain unchanged.
+- No controller API addition is required for completed-sequence recentering: `ball_balance_enable(false)` already disables the completed cascade while preserving `BALL_SEQUENCE_COMPLETE` and its elapsed time.
+# Phase 23 正式脱困斜坡与反向抗抖
+
+- 两份1300 us固件CSV均以5000 ms TIMEOUT结束，最低实际脉宽分别为1329/1327 us，未到1300 us边界，不能继续降低全局下限。
+- 第一份补偿被像素速度抖动切成4段；第二份在+2.15 cm附近卡住时增力仅到107/150 us即超时。
+- 本轮只加速正式序列斜坡到100 us/s，并要求反向速度与相对触发起点背离至少0.15 cm同时成立才清除补偿；中心模式、PID、Maix和CSV不变。
+- 当前控制器在补偿已激活时仅凭“非朝目标且非静止”立即清除，正是单像素反向速度尖峰会切断斜坡的代码路径。
+- 已有锁存字段`breakaway_start_position_cm`和`breakaway_direction`足以计算目标方向位移/速度，无需扩展状态或RAM。
+- 现有中心像素抖动测试必须继续保持50 us/s断言；正式序列测试应单独断言100 us/s，避免改动中心已验证行为。
+- 控制周期固定10 ms，因此正式100 us/s对应每次控制增力1.0 us，中心50 us/s仍为0.5 us。
+- `ball_update_breakaway()`在PID积分更新前执行，其返回值直接冻结位置积分；抗抖分支只要继续返回true即可保持积分冻结。
+- 状态接口导出的`breakaway_boost_us`已包含锁存方向，测试可直接比较正式+5为正、中心正侧回0为负，无需新增遥测字段。
+- 文档当前已正确锁定正式1300～1650 us、中心1400～1650 us，但仍把正式斜坡写为50 us/s；需要只更新“当前策略”段落，保留历史CSV段落中的旧参数以维持实验可追溯性。
+- 源码差异确认没有新增状态字段或公开接口，只有两个配置宏、阶段感知斜坡函数和激活态反向双门逻辑；因此CSV 25列和44字节记录布局不受影响。
+- `user/Objects/ball/project_ball.build_log.htm`确认当前工具链为ARM Compiler 5.06 update 5，且交互式project_ball构建目录存在；本轮只做单文件编译，不能启动并行UV4全量构建。
+- 完整主机回归为`25/25 passed`；ARMCC正式补偿启用/禁用配置均无诊断；project_ball的38个源文件通过隔离审计，未包含底盘、电机、编码器、LF04或IMU模块；`git diff --check`通过。
+## 2026-07-31 正式序列全程极限制动复测
+
+- 三份26列CSV活动段均连续10 ms，视觉年龄最大60 ms，无失视；最大位置仅为`+3.421/+2.997/+3.314 cm`，全部停留在`TO_PLUS_5`并于5000 ms超时。
+- 独立制动分别在位置约`+0.15～+0.92 cm`便触发，直接请求1650 us并保持约0.52～0.58 s；球仅到`+3.0～+3.4 cm`就反向到`-0.73～-1.36 cm`，形成约1.5 s周期的1300/1650 us极限往返。
+- 三次直接150 us脱困均已克服起点静摩擦；故障不是力度、视觉或控制方向，而是独立制动重复速度内环且触发过早。
+- 用户选择默认关闭独立极限制动；保留直接最大脱困、普通速度环连续制动、26列CSV及旧制动配置作为诊断回退。
+- 当前独立制动由`BALL_SEQUENCE_OVERSPEED_BRAKE_ENABLED`完整包围，默认值可安全改为0而无需删除实现；`brake_active`在禁用路径会被主动清零。
+- 现有主机测试只覆盖开关为1的0.5/0.1 cm/s迟滞，需要增加默认关闭回归，并用宏覆盖值1另跑同一测试保持诊断回退路径覆盖。
+- README、ROBOT_SETUP和杆球指南仍停留在100 us/s渐增及25列CSV描述，必须一并收口为正式直接150 us、独立极限制动默认关闭及26列CSV。
+# Phase 27 audit findings
+
+- 用户锁定速度环P/D=27/3，不允许回退到旧25/0；正式运行必须保持串级模式。
+- 当前生产配置被手动改成位置P/D/I=1.6/1.0/0、序列下限750 us和超时50000 ms；测试与文档仍保留旧断言，完整主机回归因此为24/25。
+- 现有最终控制量统一限制为±200 us，因此750 us配置实际不可达，脱困故障也无法按750 us边界触发。
+- 当时用户选择位置P/D/I恢复0.8/0.40/0.30、超时恢复5000 ms，并临时允许正式+5脱困到1000 us；该1000 us例外已在Phase 29根据实测过冲撤销，当前全路径恢复1300～1700 us。
+- 现有正式启动、目标折返和连续3帧重捕获路径都已设置BALL_CONTROL_CASCADE，只需增加回归锁定而无需重写入口。
+
+# Phase 28 empty CSV findings
+
+- 实机D命令只返回完整26列表头而无数据行；导出器当前无条件先发表头，`g_record_count==0`时会静默形成该现象。
+- 当前应用仅在PB24启动分支返回OK时调用`ball_telemetry_session_start()`，实际序列状态与遥测生命周期没有集中绑定；应用测试还用遥测桩替代真实记录区，不能复现空表头。
+- 当前AXF符号确认`g_records=0x20200470..0x20206b8f`共26400字节，`g_record_count=0x20200008`，无重叠或第二RAM问题。
+- 修复必须保持串级P/D/I=0.8/0.40/0.30、速度P/D=27/3、5000 ms、26列和44字节记录布局不变。
+- 原脱困负方向安全清零测试在舵机到达1400 us后仅继续300 ms，却要求增力至少95 us；当前中心斜坡50 us/s只保证增力继续为正且不超过150 us。该断言与500 ms故障门无关，改为验证有效范围而不改生产逻辑。
+- 当前完整主机回归扩展为26组并全部通过；新增联合测试实际链接生产应用和遥测模块，导出行数等于记录数+表头、每行25个逗号、重复D字节一致。
+- 交互式UV4仍打开`project_ball.uvprojx`；只能进行独立ARMCC单编，不能并行启动UV4全量构建。
+- 用户已在现有μVision窗口完成新Rebuild，构建日志时间为2026-07-31 18:24:01；新AXF仍将26400字节`g_records`放在0x20200470，计数器位于0x20200008，无布局漂移。

@@ -8,7 +8,8 @@ typedef enum {
     BALL_BALANCE_MANUAL_SERVO,
     BALL_BALANCE_WAITING_FOR_VISION,
     BALL_BALANCE_ACTIVE,
-    BALL_BALANCE_VISION_LOST
+    BALL_BALANCE_VISION_LOST,
+    BALL_BALANCE_BREAKAWAY_FAULT
 } ball_balance_state_t;
 
 typedef enum {
@@ -42,6 +43,10 @@ typedef struct {
     float target_velocity_cm_per_s;
     float speed_error_cm_per_s;
     float control_output_us;
+    float breakaway_boost_us;
+    bool breakaway_active;
+    bool brake_active;
+    bool breakaway_fault;
     int16_t raw_center_x_px;
     int16_t raw_center_y_px;
     float raw_score;

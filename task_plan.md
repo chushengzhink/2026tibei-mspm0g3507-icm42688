@@ -4,7 +4,7 @@
 在保留40%硬限幅、默认自检和现有安全保护的前提下，实现PA27四路LF04辅助纠偏、竞速速度/用时/PWM遥测及UART0 CSV导出，并完成主机与ARM构建验证。
 
 ## Current Phase
-Phase 19
+Phase 27
 
 ## Phases
 
@@ -159,6 +159,95 @@ Phase 19
 - [x] 19D: 完成接线与分阶段实机标定文档交接，不把未验证参数记录为实测值
 - **Status:** complete
 
+### Phase 20: 自动0 cm位置P外环首轮测试
+- [x] 将上电自动入口改为关闭/速度内环/0 cm串级闭环三态，默认0 cm串级闭环
+- [x] 保持位置P/D/I=1.6/0/0与速度P/D=25/0，仅切换控制模式
+- [x] 增加正负位置方向、限幅、失视恢复、PB24锁存中止和不启动正式序列的回归测试
+- [x] 同步杆球操作与实测记录文档
+- [ ] 完成23组主机测试、Maix协议/语法、空白和ARMCC验证
+- [ ] 在现有project_ball μVision窗口全量Rebuild并核对无底盘电机链接符号
+- **Status:** in_progress
+
+### Phase 21: 位置P降档与UART0 CSV遥测
+- [x] 将位置P从1.6单独降至0.8，保留全部其他PID和安全限幅
+- [x] 新增杆球独立600条/10 ms紧凑遥测及UART0停机导出门
+- [x] 集成自动中心入口、失视记录、PB24中止后回中完成与D/C命令
+- [x] 增加主机测试并同步project_ball、ISR和杆球文档
+- [x] 完成主机、Maix、ARMCC、空白、全量Rebuild及链接符号验证
+- **Status:** complete
+
+### Phase 22: 正式+5到-5首轮测试入口
+- [x] 将默认入口从自动0 cm闭环切换为PB24一次启动的正式序列
+- [x] 在正式模式保留600条UART0遥测、完成后PB24回中与安全导出门
+- [x] 冻结正式活动闭环OLED周期写入，并仅在完成后显示一次状态
+- [x] 增加正式应用回归，保留自动速度/中心模式测试
+- [x] 运行全部主机、Maix、ARMCC、XML、空白与链接隔离检查
+- [x] 同步杆球操作文档并交接用户全量Rebuild/Download
+- [ ] 用户在现有μVision窗口全量Rebuild并Download正式序列固件
+- **Status:** in_progress
+
+### Phase 23: 正式脱困斜坡加速与反向像素抗抖
+- [x] 正式序列脱困斜坡改为100 us/s，中心调试保持50 us/s
+- [x] 反向清除增加0.15 cm背离位移门，保留速度门与正向释放条件
+- [x] 增加正式/中心斜坡及反向像素抖动回归测试
+- [x] 同步杆球文档并完成主机、ARMCC、工程隔离与空白验证
+- **Status:** complete
+
+### Phase 24: 正式最大脱困与超速强制制动
+- [ ] 正式±5阶段静止300 ms后直接施加±150 us，中心调试保持50 us/s
+- [ ] 增加0.5/0.1 cm/s迟滞的阶段锁定反向制动并覆盖全部安全清零路径
+- [ ] CSV增加`brake_active`且维持600条×44字节单SRAM布局
+- [ ] 更新控制/遥测/应用回归与杆球文档
+- [ ] 完成25组主机测试、ARMCC启用/回退、工程隔离及空白检查
+- **Status:** in_progress
+
+### Phase 25: 撤销全程极限制动并恢复连续速度环制动
+- [ ] 默认关闭正式序列独立超速极限制动，保留直接150 us脱困与普通串级PID
+- [ ] 保持26列CSV、44字节记录和`brake_active`兼容接口不变
+- [ ] 更新默认关闭/诊断回退测试及杆球文档
+- [ ] 完成25组主机测试、ARMCC默认/回退单编、工程隔离及空白检查
+- **Status:** in_progress
+
+### Phase 26: 新球位置D增阻尼与端点低速确认
+- [ ] 将位置D从0.20单独提高到0.40，保持P/I、速度环和脱困策略不变
+- [ ] 为+5/−5持续计时增加`|速度|<=1.0 cm/s`门并在任一条件越界时清零
+- [ ] 更新端点穿越、正负速度、D幅值和原安全路径回归
+- [ ] 同步新球实测与回退值文档并完成便携验证
+- **Status:** in_progress
+
+### Phase 27: 串级PID收口与正式1000 us脱困（已由Phase 29撤销）
+- [ ] 恢复位置P/D/I=0.8/0.40/0.30和5000 ms总超时，锁定速度P/D=27/3
+- [x] 历史上曾仅对正式+5开放1000 us；该例外已被Phase 29撤销，当前全路径恢复1300～1700 us
+- [ ] 锁定正式启动、折返、重捕获和完成保持的串级模式及低速端点门
+- [ ] 更新PID、速度D、脱困边界与安全清零回归并同步杆球文档
+- [ ] 完成25组主机测试、ARMCC配置单编、工程隔离和空白检查
+- **Status:** in_progress
+
+### Phase 28: 第三问空CSV遥测修复
+- [ ] 将正式序列遥测启动集中到实际TO_PLUS_5/TO_MINUS_5状态并立即记录首条
+- [ ] 空缓存D命令返回EMPTY，终态OLED显示记录数量或CSV EMPTY REBOOT
+- [ ] 保持26列、44字节、600条布局和全部串级PID/安全参数不变
+- [ ] 增加生命周期、空缓存、重复导出、满缓存和26列回归
+- [ ] 修正500 ms脱困故障测试计时并完成主机、ARMCC与空白检查
+- [ ] 同步第三问导出操作文档并等待交互式Keil全量Rebuild/Download
+- **Status:** in_progress
+
+### Phase 29: 第三问恢复1300–1700 us安全边界
+- [x] 根据三份26列CSV确认1000 us正式脱困导致过强冲击，三次均停留在TO_PLUS_5并超时
+- [x] 将舵机绝对下限与正式+5脱困下限统一恢复为1300 us，保持1700 us上限
+- [x] 保持位置P/D/I=0.8/0.40/0.30、速度P/D=27/3、5秒门和端点低速判定不变
+- [x] 更新控制回归常量与当前项目/杆球操作文档，撤销1000 us当前例外
+- [ ] 等待用户Rebuild/Download并采集三份新26列CSV
+- **Status:** in_progress
+
+### Phase 30: 第三问+5折返门修正
+- [x] 解析三份1300 us新CSV并确认第1/3次已进入+5±1 cm但被低速200 ms门拒绝折返
+- [x] 保持1300–1700 us和全部PID，将+5改为±1 cm位置连续确认30 ms且不检查速度
+- [x] 保持最终-5的±1 cm、≤1 cm/s连续500 ms稳定门和5000 ms总超时
+- [x] 更新测试契约与当前项目/操作文档，不改变API、CSV、RAM或Maix
+- [ ] 等待用户Rebuild/Download并采集新CSV
+- **Status:** in_progress
+
 ## Decisions Made
 | Decision | Rationale |
 |----------|-----------|
@@ -218,6 +307,8 @@ Phase 19
 | Phase 17 combined task/progress bookkeeping patch matched the repeated phase heading ambiguously | 1 | Split the update into exact file-specific patches; source and tests were already successful |
 | Phase 18 combined planning-file patch missed a Unicode progress line | 1 | Split the bookkeeping into independent stable-anchor patches; no source file was touched |
 | Phase 18 first integrated host run reported 14/18 | 1 | Core sources compiled; update the intentionally changed telemetry and finish-gate contracts, then add formal-fusion replay coverage |
+| Phase 22 interface batch searched a nonexistent `tests/stubs/ml_common.h` | 1 | Keep the successfully read `ball_demo` interface and use the real `ml_libs/ml_common.h` path for subsequent checks |
+| Phase 22 combined app/config patch missed the exact display conditional context | 1 | No hunks were applied; split the change into small source-specific patches against the numbered current file |
 | Initial Phase 19 inventory command returned exit code 1 when no `UV4` process matched | 1 | Treat the empty process result separately from file inventory; no build was launched |
 | First focused ball controller test expected integral growth while the +5 cm command was saturated | 1 | Move the simulated ball to +2 cm before checking nonzero integral, then keep the clear-on-abort assertion |
 | First focused-test shell command was rejected because it combined cleanup with a computed temporary path | 1 | Use explicit executables under the system temporary directory and leave cleanup outside the test command |
@@ -226,3 +317,7 @@ Phase 19
 | Windows `rg` rejected a literal `code/ball_*.c` path during the forbidden-call audit | 1 | Search the `code` directory with `-g 'ball_*.c'`; the corrected audit found no forbidden calls |
 | First 52-byte-by-600 telemetry allocation overflowed SRAM by `0xC10` | 1 | Keep the 52-byte public record and 27-column CSV but store 600 internal 44-byte compact records; tick/heading remain exact and x/y use 0.25 mm resolution |
 | Feedforward-first formal arbitration caused severe first-semicircle departure | 1 | Restore `22d672e` LF04-priority steering, retain split telemetry/finish changes, and add the exact B8 `-120` versus `+77/+37` regression |
+| Phase 20 ARMCC inventory used a literal PowerShell `*.ps1` path | 1 | Search containing directories with `-g '*.ps1'` filters instead; no source/build action was performed |
+| Phase 21旧控制周期测试把控制量符号绑定到位置目标方向 | 1 | P降至0.8后残余速度可能主导内环；改为验证控制量与速度误差同号，并固定检查全部本轮PID值 |
+| Phase 24首次主机回归仍断言正式首周期增力为1 us | 1 | 源码已正确直接输出150 us；更新正式测试契约并补充超速制动回归，中心0.5 us断言保留 |
+| Phase 29首个组合补丁未匹配progress中的精确上下文 | 1 | 拆分为稳定锚点补丁；首次尝试未修改任何文件 |

@@ -18,6 +18,11 @@ void TIMG6_IRQHandler(void)
     tim_irq_dispatch(TIMG6);
 }
 
+void UART0_IRQHandler(void)
+{
+    uart_irq_dispatch(UART0);
+}
+
 #if !BALL_BALANCE_BUILD
 void TIMG7_IRQHandler(void)
 {
@@ -32,11 +37,6 @@ void TIMG8_IRQHandler(void)
 void TIMG12_IRQHandler(void)
 {
     tim_irq_dispatch(TIMG12);
-}
-
-void UART0_IRQHandler(void)
-{
-    uart_irq_dispatch(UART0);
 }
 
 void UART1_IRQHandler(void)

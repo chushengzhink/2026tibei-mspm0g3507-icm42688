@@ -436,6 +436,16 @@
               <FilePath>..\code\ball_balance_config.h</FilePath>
             </File>
             <File>
+              <FileName>ball_telemetry.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\ball_telemetry.c</FilePath>
+            </File>
+            <File>
+              <FileName>ball_telemetry.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\ball_telemetry.h</FilePath>
+            </File>
+            <File>
               <FileName>ball_demo.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\code\ball_demo.c</FilePath>
