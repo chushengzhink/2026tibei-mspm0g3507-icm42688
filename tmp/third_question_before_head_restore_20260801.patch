@@ -1,0 +1,184 @@
+diff --git a/code/ball_balance.c b/code/ball_balance.c
+index b618b50..f0cf869 100644
+--- a/code/ball_balance.c
++++ b/code/ball_balance.c
+@@ -98,6 +98,12 @@ static bool ball_sequence_is_running(void)
+         (g_ball.sequence_state == BALL_SEQUENCE_TO_MINUS_5_CM);
+ }
+ 
++static bool ball_sequence_minus_hold_active(void)
++{
++    return (g_ball.sequence_state == BALL_SEQUENCE_COMPLETE) &&
++        g_ball.sequence_endpoint_captured;
++}
++
+ static void ball_tick_1ms(void *context)
+ {
+     (void) context;
+@@ -599,7 +605,9 @@ static float ball_sequence_minus_velocity_reference(void)
+         speed_limit_cm_per_s =
+             BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S;
+         target_velocity_cm_per_s =
+-            BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S * g_ball.error_cm;
++            (BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S * g_ball.error_cm) -
++            (BALL_SEQUENCE_MINUS_APPROACH_KD *
++             g_ball.velocity_cm_per_s);
+     }
+     return ball_clamp(target_velocity_cm_per_s,
+         -speed_limit_cm_per_s, speed_limit_cm_per_s);
+@@ -607,7 +615,8 @@ static float ball_sequence_minus_velocity_reference(void)
+ 
+ static float ball_sequence_velocity_reference(void)
+ {
+-    if (g_ball.sequence_state == BALL_SEQUENCE_TO_MINUS_5_CM) {
++    if ((g_ball.sequence_state == BALL_SEQUENCE_TO_MINUS_5_CM) ||
++        ball_sequence_minus_hold_active()) {
+         return ball_sequence_minus_velocity_reference();
+     }
+     return ball_sequence_plus_velocity_reference();
+@@ -666,7 +675,8 @@ static void ball_run_controller(void)
+     if (g_ball.control_mode == BALL_CONTROL_SPEED_TEST) {
+         g_ball.integral_cm_s = 0.0f;
+         target_velocity = 0.0f;
+-    } else if (ball_sequence_is_running()) {
++    } else if (ball_sequence_is_running() ||
++               ball_sequence_minus_hold_active()) {
+         g_ball.integral_cm_s = 0.0f;
+         target_velocity = ball_sequence_velocity_reference();
+         if (ball_update_sequence_brake(target_velocity)) {
+@@ -731,7 +741,8 @@ static void ball_run_controller(void)
+     g_ball.target_velocity_cm_per_s = target_velocity;
+     g_ball.speed_error_cm_per_s =
+         target_velocity - g_ball.velocity_cm_per_s;
+-    if ((g_ball.sequence_state == BALL_SEQUENCE_TO_MINUS_5_CM) &&
++    if (((g_ball.sequence_state == BALL_SEQUENCE_TO_MINUS_5_CM) ||
++         ball_sequence_minus_hold_active()) &&
+         g_ball.sequence_approach_braking) {
+         speed_kd_us_per_cm_per_s2 =
+             BALL_SEQUENCE_MINUS_BRAKE_SPEED_KD_US_PER_CM_PER_S2;
+@@ -1011,7 +1022,8 @@ static void ball_update_sequence(uint32_t now_ms)
+         ball_set_internal_target(BALL_SEQUENCE_MINUS_CM);
+     } else {
+         g_ball.sequence_state = BALL_SEQUENCE_COMPLETE;
+-        ball_reset_sequence_planner();
++        g_ball.sequence_approach_braking = true;
++        g_ball.sequence_endpoint_captured = true;
+         g_ball.brake_active = false;
+         g_ball.sequence_elapsed_ms = now_ms - g_ball.sequence_start_ms;
+     }
+diff --git a/code/ball_balance_config.h b/code/ball_balance_config.h
+index 7b0801f..725a3b2 100644
+--- a/code/ball_balance_config.h
++++ b/code/ball_balance_config.h
+@@ -99,6 +99,7 @@
+ #define BALL_SEQUENCE_MINUS_BRAKE_ACCEL_CM_PER_S2 (24.0f)
+ #define BALL_SEQUENCE_MINUS_BRAKE_MARGIN_CM (0.15f)
+ #define BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S (2.0f)
++#define BALL_SEQUENCE_MINUS_APPROACH_KD       (0.5f)
+ #define BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S (4.0f)
+ #define BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM (0.40f)
+ #define BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S (3.0f)
+diff --git a/tests/ball_balance_test.c b/tests/ball_balance_test.c
+index c4d7e58..d79009d 100644
+--- a/tests/ball_balance_test.c
++++ b/tests/ball_balance_test.c
+@@ -764,9 +764,20 @@ static void test_sequence_minus_braking_capture_and_recovery(void)
+     advance_ms(BALL_CONTROL_PERIOD_MS);
+     assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+     assert(status.target_velocity_cm_per_s < 0.0f);
++    expected_target_velocity =
++        (BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S * status.error_cm) -
++        (BALL_SEQUENCE_MINUS_APPROACH_KD * status.velocity_cm_per_s);
++    if (expected_target_velocity <
++        -BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S) {
++        expected_target_velocity =
++            -BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S;
++    } else if (expected_target_velocity >
++               BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S) {
++        expected_target_velocity =
++            BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S;
++    }
+     assert(fabsf(status.target_velocity_cm_per_s -
+-        (BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S * status.error_cm)) <
+-        0.01f);
++        expected_target_velocity) < 0.01f);
+     assert(status.target_velocity_cm_per_s >=
+         -BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S);
+ 
+@@ -801,12 +812,6 @@ static void test_sequence_minus_braking_capture_and_recovery(void)
+     assert(fabsf(status.target_velocity_cm_per_s -
+         expected_target_velocity) < 0.01f);
+ 
+-    advance_frame(20U, capture_ms += 20U, -4.9f, 1U);
+-    advance_frame(20U, capture_ms += 20U, -4.8f, 1U);
+-    advance_frame(20U, capture_ms += 20U, -4.7f, 1U);
+-    advance_frame(20U, capture_ms += 20U, -4.7f, 1U);
+-    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+-    assert(status.velocity_cm_per_s > 0.0f);
+     stationary_target_velocity =
+         BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S * status.error_cm;
+     if (stationary_target_velocity <
+@@ -818,7 +823,19 @@ static void test_sequence_minus_braking_capture_and_recovery(void)
+         stationary_target_velocity =
+             BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
+     }
+-    assert(status.target_velocity_cm_per_s < stationary_target_velocity);
++    expected_target_velocity =
++        (BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S * status.error_cm) -
++        (BALL_SEQUENCE_MINUS_CAPTURE_KD * 1.5f);
++    if (expected_target_velocity <
++        -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S) {
++        expected_target_velocity =
++            -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
++    } else if (expected_target_velocity >
++               BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S) {
++        expected_target_velocity =
++            BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
++    }
++    assert(expected_target_velocity < stationary_target_velocity);
+ 
+     for (i = 0U; i < 10U; ++i) {
+         measured_position_cm = -3.5f;
+@@ -908,6 +925,7 @@ static void test_complete_sequence_and_hold(void)
+     uint32_t capture_ms;
+     uint32_t completed_elapsed_ms;
+     uint32_t i;
++    float expected_target_velocity;
+     const float plus_path[] = {2.0f, 4.0f, 5.0f};
+     const float minus_path[] = {3.0f, 1.0f, -1.0f, -3.0f, -5.0f};
+ 
+@@ -944,6 +962,26 @@ static void test_complete_sequence_and_hold(void)
+     assert(fabsf(status.target_cm + 5.0f) < 0.01f);
+     assert(status.servo_target_us != 1500U ||
+         fabsf(status.error_cm) < 0.05f);
++
++    advance_frame(20U, capture_ms += 20U, -4.4f, 1U);
++    advance_ms(BALL_CONTROL_PERIOD_MS);
++    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
++    expected_target_velocity =
++        (BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S * status.error_cm) -
++        (BALL_SEQUENCE_MINUS_CAPTURE_KD * status.velocity_cm_per_s);
++    if (expected_target_velocity <
++        -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S) {
++        expected_target_velocity =
++            -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
++    } else if (expected_target_velocity >
++               BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S) {
++        expected_target_velocity =
++            BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
++    }
++    assert(fabsf(status.target_velocity_cm_per_s -
++        expected_target_velocity) < 0.01f);
++    assert(status.target_velocity_cm_per_s < 0.0f);
++
+     assert(ball_balance_start_pm5_sequence() == ML_STATUS_BUSY);
+     assert(g_last_pwm_duty >= 3250U);
+     assert(g_last_pwm_duty <= 4250U);
+@@ -1931,6 +1969,7 @@ int main(void)
+     assert(BALL_SEQUENCE_MINUS_BRAKE_ACCEL_CM_PER_S2 == 24.0f);
+     assert(BALL_SEQUENCE_MINUS_BRAKE_MARGIN_CM == 0.15f);
+     assert(BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S == 2.0f);
++    assert(BALL_SEQUENCE_MINUS_APPROACH_KD == 0.5f);
+     assert(BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S == 4.0f);
+     assert(BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM == 0.40f);
+     assert(BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S == 3.0f);

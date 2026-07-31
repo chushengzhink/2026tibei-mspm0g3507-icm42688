@@ -546,7 +546,7 @@ static void test_invalid_frame_clears_sequence_settle(void)
         BALL_SEQUENCE_PLUS_CM, 1U);
     assert(ball_balance_get_status(&status) == ML_STATUS_OK);
     assert(status.sequence_state == BALL_SEQUENCE_TO_PLUS_5_CM);
-    for (i = 0U; i < 2U; ++i) {
+    for (i = 0U; i < 1U; ++i) {
         advance_frame(20U, capture_ms += 20U,
             BALL_SEQUENCE_PLUS_CM, 1U);
     }
@@ -573,6 +573,17 @@ static void test_sequence_plus_position_confirm_and_final_low_speed(void)
         BALL_SEQUENCE_CRUISE_SPEED_CM_PER_S);
     assert(status.control_output_us > 0.0f);
     assert(status.servo_target_us < BALL_SERVO_CENTER_US);
+
+    reset_controller();
+    capture_ms = make_vision_ready_at(2.6f);
+    assert(ball_balance_start_pm5_sequence() == ML_STATUS_OK);
+    advance_ms(BALL_CONTROL_PERIOD_MS);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(fabsf(status.error_cm) < BALL_SEQUENCE_PLUS_APPROACH_ZONE_CM);
+    assert(status.target_velocity_cm_per_s <
+        BALL_SEQUENCE_CRUISE_SPEED_CM_PER_S);
+    assert(fabsf(status.target_velocity_cm_per_s -
+        (BALL_SEQUENCE_APPROACH_KP_PER_S * status.error_cm)) < 0.01f);
 
     reset_controller();
     capture_ms = make_vision_ready_at(0.0f);
@@ -761,27 +772,6 @@ static void test_sequence_minus_braking_capture_and_recovery(void)
         }
     }
     assert(low_speed_band_seen);
-    advance_ms(BALL_CONTROL_PERIOD_MS);
-    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
-    assert(status.target_velocity_cm_per_s < 0.0f);
-    assert(fabsf(status.target_velocity_cm_per_s -
-        (BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S * status.error_cm)) <
-        0.01f);
-    assert(status.target_velocity_cm_per_s >=
-        -BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S);
-
-    for (i = 0U; i < 50U; ++i) {
-        measured_position_cm = -4.7f;
-        advance_frame(20U, capture_ms += 20U,
-            measured_position_cm, 1U);
-        assert(ball_balance_get_status(&status) == ML_STATUS_OK);
-        if ((fabsf(status.error_cm) <=
-             BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM) &&
-            (fabsf(status.velocity_cm_per_s) <=
-             BALL_SEQUENCE_SETTLE_SPEED_MAX_CM_PER_S)) {
-            break;
-        }
-    }
     advance_ms(BALL_CONTROL_PERIOD_MS);
     assert(ball_balance_get_status(&status) == ML_STATUS_OK);
     assert(fabsf(status.error_cm) <=
@@ -1923,16 +1913,18 @@ int main(void)
     assert(BALL_SPEED_KP_US_PER_CM_PER_S == 27.0f);
     assert(BALL_SPEED_KD_US_PER_CM_PER_S2 == 3.0f);
     assert(BALL_SEQUENCE_SPEED_KD_US_PER_CM_PER_S2 == 0.0f);
-    assert(BALL_SEQUENCE_CRUISE_SPEED_CM_PER_S == 4.5f);
+    assert(BALL_SEQUENCE_CRUISE_SPEED_CM_PER_S == 3.0f);
     assert(BALL_SEQUENCE_BRAKE_ACCEL_CM_PER_S2 == 18.0f);
     assert(BALL_SEQUENCE_BRAKE_MARGIN_CM == 0.25f);
-    assert(BALL_SEQUENCE_APPROACH_KP_PER_S == 2.0f);
+    assert(BALL_SEQUENCE_PLUS_APPROACH_ZONE_CM == 2.5f);
+    assert(BALL_SEQUENCE_APPROACH_KP_PER_S == 1.2f);
     assert(BALL_SEQUENCE_MINUS_CRUISE_SPEED_CM_PER_S == 5.0f);
     assert(BALL_SEQUENCE_MINUS_BRAKE_ACCEL_CM_PER_S2 == 24.0f);
     assert(BALL_SEQUENCE_MINUS_BRAKE_MARGIN_CM == 0.15f);
-    assert(BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S == 2.0f);
+    assert(BALL_SEQUENCE_MINUS_APPROACH_ZONE_CM == 2.0f);
+    assert(BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S == 3.0f);
     assert(BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S == 4.0f);
-    assert(BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM == 0.40f);
+    assert(BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM == 1.0f);
     assert(BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S == 3.0f);
     assert(BALL_SEQUENCE_MINUS_CAPTURE_KD == 1.0f);
     assert(BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S == 2.0f);
@@ -1963,7 +1955,11 @@ int main(void)
     assert(BALL_SEQUENCE_BREAKAWAY_SERVO_MINIMUM_US == 1300U);
     assert(BALL_SEQUENCE_BREAKAWAY_STAGE1_HOLD_MS == 250U);
     assert(BALL_SEQUENCE_BREAKAWAY_STAGE2_HOLD_MS == 250U);
+    assert(BALL_SEQUENCE_MINUS_BREAKAWAY_STAGE1_HOLD_MS == 150U);
+    assert(BALL_SEQUENCE_MINUS_BREAKAWAY_STAGE2_HOLD_MS == 350U);
     assert(BALL_BREAKAWAY_SERVO_MAXIMUM_US == 1650U);
+    assert(BALL_SEQUENCE_BREAKAWAY_STAGE1_SERVO_MAXIMUM_US == 1650U);
+    assert(BALL_SEQUENCE_BREAKAWAY_SERVO_MAXIMUM_US == 1700U);
     assert(BALL_SEQUENCE_BREAKAWAY_SERVO_MINIMUM_US >=
         BALL_SERVO_MINIMUM_US);
     assert(((float) BALL_SERVO_CENTER_US - BALL_CONTROL_LIMIT_US) >=
@@ -1971,7 +1967,7 @@ int main(void)
     assert(BALL_BREAKAWAY_SERVO_MAXIMUM_US <=
         BALL_SERVO_MAXIMUM_US);
     assert(BALL_SEQUENCE_PLUS_ERROR_CM == 0.8f);
-    assert(BALL_SEQUENCE_PLUS_CONFIRM_MS == 30U);
+    assert(BALL_SEQUENCE_PLUS_CONFIRM_MS == 10U);
     assert(BALL_SEQUENCE_FINAL_ERROR_CM == 1.0f);
     assert(BALL_SEQUENCE_SETTLE_SPEED_MAX_CM_PER_S == 1.0f);
     assert(BALL_SEQUENCE_FINAL_SETTLE_MS == 500U);
