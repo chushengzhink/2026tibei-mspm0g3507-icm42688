@@ -592,7 +592,9 @@ static float ball_sequence_minus_velocity_reference(void)
         speed_limit_cm_per_s =
             BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
         target_velocity_cm_per_s =
-            BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S * g_ball.error_cm;
+            (BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S * g_ball.error_cm) -
+            (BALL_SEQUENCE_MINUS_CAPTURE_KD *
+             g_ball.velocity_cm_per_s);
     } else {
         speed_limit_cm_per_s =
             BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S;

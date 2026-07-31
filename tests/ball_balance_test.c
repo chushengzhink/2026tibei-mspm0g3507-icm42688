@@ -662,6 +662,8 @@ static void test_sequence_minus_braking_capture_and_recovery(void)
     ball_balance_status_t status;
     uint32_t capture_ms;
     uint32_t i;
+    float expected_target_velocity;
+    float stationary_target_velocity;
     float measured_position_cm;
     bool braking_seen = false;
     bool cruise_before_brake_seen = false;
@@ -763,10 +765,60 @@ static void test_sequence_minus_braking_capture_and_recovery(void)
     assert(ball_balance_get_status(&status) == ML_STATUS_OK);
     assert(status.target_velocity_cm_per_s < 0.0f);
     assert(fabsf(status.target_velocity_cm_per_s -
-        (BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S * status.error_cm)) <
+        (BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S * status.error_cm)) <
         0.01f);
     assert(status.target_velocity_cm_per_s >=
-        -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S);
+        -BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S);
+
+    for (i = 0U; i < 50U; ++i) {
+        measured_position_cm = -4.7f;
+        advance_frame(20U, capture_ms += 20U,
+            measured_position_cm, 1U);
+        assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+        if ((fabsf(status.error_cm) <=
+             BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM) &&
+            (fabsf(status.velocity_cm_per_s) <=
+             BALL_SEQUENCE_SETTLE_SPEED_MAX_CM_PER_S)) {
+            break;
+        }
+    }
+    advance_ms(BALL_CONTROL_PERIOD_MS);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(fabsf(status.error_cm) <=
+        BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM);
+    expected_target_velocity =
+        (BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S * status.error_cm) -
+        (BALL_SEQUENCE_MINUS_CAPTURE_KD * status.velocity_cm_per_s);
+    if (expected_target_velocity <
+        -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S) {
+        expected_target_velocity =
+            -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
+    } else if (expected_target_velocity >
+               BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S) {
+        expected_target_velocity =
+            BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
+    }
+    assert(fabsf(status.target_velocity_cm_per_s -
+        expected_target_velocity) < 0.01f);
+
+    advance_frame(20U, capture_ms += 20U, -4.9f, 1U);
+    advance_frame(20U, capture_ms += 20U, -4.8f, 1U);
+    advance_frame(20U, capture_ms += 20U, -4.7f, 1U);
+    advance_frame(20U, capture_ms += 20U, -4.7f, 1U);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.velocity_cm_per_s > 0.0f);
+    stationary_target_velocity =
+        BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S * status.error_cm;
+    if (stationary_target_velocity <
+        -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S) {
+        stationary_target_velocity =
+            -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
+    } else if (stationary_target_velocity >
+               BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S) {
+        stationary_target_velocity =
+            BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
+    }
+    assert(status.target_velocity_cm_per_s < stationary_target_velocity);
 
     for (i = 0U; i < 10U; ++i) {
         measured_position_cm = -3.5f;
@@ -791,7 +843,20 @@ static void test_sequence_minus_braking_capture_and_recovery(void)
     advance_ms(BALL_CONTROL_PERIOD_MS);
     assert(ball_balance_get_status(&status) == ML_STATUS_OK);
     assert(fabsf(status.error_cm) <= BALL_SEQUENCE_FINAL_ERROR_CM);
-    assert(status.target_velocity_cm_per_s == 0.0f);
+    expected_target_velocity =
+        (BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S * status.error_cm) -
+        (BALL_SEQUENCE_MINUS_CAPTURE_KD * status.velocity_cm_per_s);
+    if (expected_target_velocity <
+        -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S) {
+        expected_target_velocity =
+            -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
+    } else if (expected_target_velocity >
+               BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S) {
+        expected_target_velocity =
+            BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
+    }
+    assert(fabsf(status.target_velocity_cm_per_s -
+        expected_target_velocity) < 0.01f);
     measured_position_cm = BALL_SEQUENCE_MINUS_CM;
 
     for (i = 0U; i < 30U; ++i) {
@@ -1867,8 +1932,9 @@ int main(void)
     assert(BALL_SEQUENCE_MINUS_BRAKE_MARGIN_CM == 0.15f);
     assert(BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S == 2.0f);
     assert(BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S == 4.0f);
-    assert(BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM == 0.80f);
+    assert(BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM == 0.40f);
     assert(BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S == 3.0f);
+    assert(BALL_SEQUENCE_MINUS_CAPTURE_KD == 1.0f);
     assert(BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S == 2.0f);
     assert(BALL_SEQUENCE_MINUS_CRUISE_BRAKE_LIMIT_US == 20.0f);
     assert(BALL_SEQUENCE_MINUS_BRAKE_SPEED_KD_US_PER_CM_PER_S2 == 3.0f);
