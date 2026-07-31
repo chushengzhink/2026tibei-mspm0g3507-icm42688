@@ -7,6 +7,30 @@ import time
 APP_CMD_BALL_STATE = 0x02
 BALL_PACKET_FORMAT = "<IhhffB3x"
 BALL_PERCENT_PER_CM = 5.8
+BALL_PERCENT_TO_CM_POINTS = (
+    (-83.8, -12.0),
+    (-68.8, -10.0),
+    (-61.3, -9.0),
+    (-54.4, -8.0),
+    (-47.5, -7.0),
+    (-41.2, -6.0),
+    (-33.8, -5.0),
+    (-26.9, -4.0),
+    (-19.4, -3.0),
+    (-12.5, -2.0),
+    (-6.2, -1.0),
+    (0.0, 0.0),
+    (6.9, 1.0),
+    (13.8, 2.0),
+    (21.9, 3.0),
+    (28.1, 4.0),
+    (34.4, 5.0),
+    (41.2, 6.0),
+    (48.8, 7.0),
+    (55.6, 8.0),
+    (61.9, 9.0),
+    (80.8, 12.0),
+)
 ROI_X_PERCENT_LIMIT = 84.0
 ROI_Y_PERCENT_LIMIT = 20.0
 DETECT_CONF_THRESHOLD = 0.20
@@ -34,17 +58,31 @@ def crc16_ibm(data):
     return crc & 0xFFFF
 
 
+def interpolate_position_cm(x_percent):
+    if x_percent <= BALL_PERCENT_TO_CM_POINTS[0][0]:
+        return BALL_PERCENT_TO_CM_POINTS[0][1]
+    for index in range(1, len(BALL_PERCENT_TO_CM_POINTS)):
+        left_percent, left_cm = BALL_PERCENT_TO_CM_POINTS[index - 1]
+        right_percent, right_cm = BALL_PERCENT_TO_CM_POINTS[index]
+        if x_percent <= right_percent:
+            span = right_percent - left_percent
+            ratio = (x_percent - left_percent) / span
+            return left_cm + (ratio * (right_cm - left_cm))
+    return BALL_PERCENT_TO_CM_POINTS[-1][1]
+
+
 def map_center_x(center_x):
     display_x = half_width - center_x
     x_percent = display_x / half_width * 100.0
-    position_cm = x_percent / BALL_PERCENT_PER_CM
-    return display_x, x_percent, position_cm
+    raw_position_cm = x_percent / BALL_PERCENT_PER_CM
+    position_cm = interpolate_position_cm(x_percent)
+    return display_x, x_percent, raw_position_cm, position_cm
 
 
 def measure_obj(obj):
     center_x = obj.x + obj.w // 2
     center_y = obj.y + obj.h // 2
-    display_x, x_percent, position_cm = map_center_x(center_x)
+    display_x, x_percent, raw_position_cm, position_cm = map_center_x(center_x)
     display_y = half_height - center_y
     y_percent = display_y / half_height * 100.0
     return {
@@ -55,6 +93,7 @@ def measure_obj(obj):
         "display_y": display_y,
         "x_percent": x_percent,
         "y_percent": y_percent,
+        "raw_position_cm": raw_position_cm,
         "position_cm": position_cm,
     }
 
@@ -84,7 +123,7 @@ def draw_detector_status(img, total_count, roi_count):
     img.draw_string(
         0,
         image_height - 48,
-        f"CAL {BALL_PERCENT_PER_CM:.1f}%/cm",
+        "MAP FIX +/-12",
         color=image.COLOR_RED,
     )
     img.draw_string(
@@ -180,15 +219,16 @@ while not app.need_exit():
             f"X {ball_info['display_x']:+.0f}px {ball_info['x_percent']:+.1f}%",
             color=image.COLOR_RED,
         )
-        img.draw_string(0, 16, f"CM {ball_info['position_cm']:+.2f}", color=image.COLOR_RED)
+        img.draw_string(0, 16, f"RAWCM {ball_info['raw_position_cm']:+.2f}", color=image.COLOR_RED)
+        img.draw_string(0, 32, f"FIXCM {ball_info['position_cm']:+.2f}", color=image.COLOR_RED)
         img.draw_string(
             0,
-            32,
+            48,
             f"Y {ball_info['display_y']:+.0f}px {ball_info['y_percent']:+.1f}%",
             color=image.COLOR_RED,
         )
-        img.draw_string(0, 48, f"S {obj.score:.2f}", color=image.COLOR_RED)
+        img.draw_string(0, 64, f"S {obj.score:.2f}", color=image.COLOR_RED)
         if roi_count > 1:
-            img.draw_string(0, 64, f"ROI MULTI {roi_count}", color=image.COLOR_RED)
+            img.draw_string(0, 80, f"ROI MULTI {roi_count}", color=image.COLOR_RED)
     draw_detector_status(img, len(objs), roi_count)
     dis.show(img)

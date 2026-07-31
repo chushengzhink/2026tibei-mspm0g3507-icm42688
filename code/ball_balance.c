@@ -354,7 +354,7 @@ static bool ball_update_breakaway(void)
                 g_ball.breakaway_direction;
             toward_velocity_cm_per_s =
                 g_ball.velocity_cm_per_s * g_ball.breakaway_direction;
-            if (sequence_minus &&
+            if (sequence_running &&
                 (toward_velocity_cm_per_s <
                  -BALL_SEQUENCE_MINUS_BREAKAWAY_ARM_SPEED_MAX_CM_PER_S)) {
                 ball_clear_breakaway_transient();
@@ -404,7 +404,7 @@ static bool ball_update_breakaway(void)
         }
     }
 
-    if (!g_ball.breakaway_active && sequence_minus &&
+    if (!g_ball.breakaway_active && sequence_running &&
         (ball_abs(g_ball.velocity_cm_per_s) >
          BALL_SEQUENCE_MINUS_BREAKAWAY_ARM_SPEED_MAX_CM_PER_S)) {
         ball_clear_breakaway_transient();
@@ -589,10 +589,6 @@ static float ball_sequence_minus_velocity_reference(void)
     }
 
     if (g_ball.sequence_endpoint_captured) {
-        if (absolute_error_cm <=
-            BALL_SEQUENCE_MINUS_CAPTURE_DEADBAND_CM) {
-            return 0.0f;
-        }
         speed_limit_cm_per_s =
             BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
         target_velocity_cm_per_s =
@@ -621,11 +617,10 @@ static void ball_update_sequence_capture(void)
         g_ball.sequence_endpoint_captured) {
         return;
     }
-    if (((ball_abs(g_ball.error_cm) <=
-          BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM) &&
-         (ball_abs(g_ball.velocity_cm_per_s) <=
-          BALL_SEQUENCE_SETTLE_SPEED_MAX_CM_PER_S)) ||
-        (g_ball.error_cm >= 0.0f)) {
+    if ((ball_abs(g_ball.error_cm) <=
+         BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM) &&
+        (ball_abs(g_ball.velocity_cm_per_s) <=
+         BALL_SEQUENCE_SETTLE_SPEED_MAX_CM_PER_S)) {
         g_ball.sequence_approach_braking = true;
         g_ball.sequence_endpoint_captured = true;
         ball_clear_breakaway_transient();
@@ -760,6 +755,14 @@ static void ball_run_controller(void)
             candidate_control =
                 ball_clamp_breakaway_control(candidate_control);
         }
+    }
+    if ((g_ball.sequence_state == BALL_SEQUENCE_TO_MINUS_5_CM) &&
+        !g_ball.sequence_approach_braking &&
+        !g_ball.sequence_endpoint_captured &&
+        !g_ball.breakaway_active && !g_ball.brake_active &&
+        (candidate_control >
+         BALL_SEQUENCE_MINUS_CRUISE_BRAKE_LIMIT_US)) {
+        candidate_control = BALL_SEQUENCE_MINUS_CRUISE_BRAKE_LIMIT_US;
     }
     if (sequence_direct_breakaway) {
         g_ball.control_output_us =
@@ -976,7 +979,7 @@ static void ball_update_sequence(uint32_t now_ms)
     if (g_ball.sequence_state == BALL_SEQUENCE_TO_PLUS_5_CM) {
         allowed_error = BALL_SEQUENCE_PLUS_ERROR_CM;
         settle_time_ms = BALL_SEQUENCE_PLUS_CONFIRM_MS;
-        require_low_speed = true;
+        require_low_speed = false;
     } else {
         allowed_error = BALL_SEQUENCE_FINAL_ERROR_CM;
         settle_time_ms = BALL_SEQUENCE_FINAL_SETTLE_MS;
