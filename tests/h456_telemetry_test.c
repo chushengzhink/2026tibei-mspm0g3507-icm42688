@@ -57,6 +57,8 @@ static h456_telemetry_sample_t make_sample(uint32_t timestamp_ms,
     sample.ball_control_output_us = 42.5f;
     sample.servo_target_us = 1483U;
     sample.servo_current_us = 1491U;
+    sample.raw_x_px = -42;
+    sample.raw_y_px = 119;
     sample.vision_age_ms = 15U;
     sample.frame_interval_ms = 33U;
     sample.vision_ready = true;
@@ -64,7 +66,7 @@ static h456_telemetry_sample_t make_sample(uint32_t timestamp_ms,
     return sample;
 }
 
-static void assert_csv_has_32_columns(const char *csv)
+static void assert_csv_has_34_columns(const char *csv)
 {
     uint32_t commas = 0U;
     uint32_t lines = 0U;
@@ -73,7 +75,7 @@ static void assert_csv_has_32_columns(const char *csv)
         if (*csv == ',') {
             ++commas;
         } else if (*csv == '\r') {
-            assert(commas == 31U);
+            assert(commas == 33U);
             commas = 0U;
             ++lines;
         }
@@ -87,7 +89,7 @@ static void test_period_export_and_commands(void)
     h456_telemetry_sample_t sample = make_sample(1000U, H456_MODE_4);
 
     assert(h456_telemetry_init() == ML_STATUS_OK);
-    assert(h456_telemetry_storage_bytes() == 24000U);
+    assert(h456_telemetry_storage_bytes() == 26400U);
     reset_uart();
     assert(h456_telemetry_uart0_handle_byte('D', true, 0U) ==
         ML_STATUS_BUFFER_EMPTY);
@@ -117,11 +119,14 @@ static void test_period_export_and_commands(void)
         ML_STATUS_OK);
     assert(strncmp(g_uart_capture, "time_ms,mode,mission_state,",
         strlen("time_ms,mode,mission_state,")) == 0);
+    assert(strstr(g_uart_capture, "raw_x_px,raw_y_px") != 0);
     assert(strstr(g_uart_capture,
         "0,4,1,7050,0,1.125,0,1234,356.25,240.0,235.5,") != 0);
     assert(strstr(g_uart_capture,
+        "1483,1491,-42,119,15,33,1,1,0,0") != 0);
+    assert(strstr(g_uart_capture,
         "30,4,3,7050,0,1.125,1,1234,356.25,240.0,235.5,") != 0);
-    assert_csv_has_32_columns(g_uart_capture);
+    assert_csv_has_34_columns(g_uart_capture);
     assert(h456_telemetry_uart0_handle_byte('C', true, 1030U) ==
         ML_STATUS_OK);
     assert(h456_telemetry_count() == 0U);

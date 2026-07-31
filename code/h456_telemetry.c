@@ -6,7 +6,7 @@
 
 #include "ml_uart.h"
 
-#define H456_TELEMETRY_LINE_SIZE (288U)
+#define H456_TELEMETRY_LINE_SIZE (320U)
 #define H456_LINE_USABLE_MASK    (0x01U)
 #define H456_LINE_RECOVERING_MASK (0x02U)
 #define H456_BALL_VISION_MASK    (0x01U)
@@ -35,13 +35,15 @@ typedef struct {
     int16_t ball_control_deci_us;
     uint16_t servo_target_us;
     uint16_t servo_current_us;
+    int16_t raw_x_px;
+    int16_t raw_y_px;
     uint16_t vision_age_ms;
     uint16_t frame_interval_ms;
     uint8_t ball_flags;
     uint8_t mode_state;
 } h456_telemetry_record_t;
 
-typedef char h456_telemetry_record_must_be_40_bytes[
+typedef char h456_telemetry_record_must_be_44_bytes[
     (sizeof(h456_telemetry_record_t) == H456_TELEMETRY_RECORD_BYTES) ?
     1 : -1];
 
@@ -150,6 +152,8 @@ static void h456_telemetry_pack(h456_telemetry_record_t *record,
         h456_telemetry_i16(sample->ball_control_output_us, 10.0f);
     record->servo_target_us = sample->servo_target_us;
     record->servo_current_us = sample->servo_current_us;
+    record->raw_x_px = sample->raw_x_px;
+    record->raw_y_px = sample->raw_y_px;
     record->vision_age_ms =
         h456_telemetry_u32_to_u16(sample->vision_age_ms);
     record->frame_interval_ms =
@@ -249,7 +253,7 @@ static ml_status_t h456_export_csv(void)
         "line_recovering,line_correction_mm_s,final_steering_bias_mm_s,"
         "ball_target_cm,ball_position_cm,ball_error_min_cm,"
         "ball_error_max_cm,ball_velocity_cm_s,ball_control_output_us,"
-        "servo_target_us,servo_current_us,vision_age_ms,"
+        "servo_target_us,servo_current_us,raw_x_px,raw_y_px,vision_age_ms,"
         "frame_interval_ms,vision_ready,ball_enabled,ball_violation,"
         "breakaway_fault\r\n";
     char line[H456_TELEMETRY_LINE_SIZE];
@@ -335,6 +339,10 @@ static ml_status_t h456_export_csv(void)
         index = h456_append_u32(line, index, record->servo_target_us);
         H456_CSV_COMMA();
         index = h456_append_u32(line, index, record->servo_current_us);
+        H456_CSV_COMMA();
+        index = h456_append_i32(line, index, record->raw_x_px);
+        H456_CSV_COMMA();
+        index = h456_append_i32(line, index, record->raw_y_px);
         H456_CSV_COMMA();
         index = h456_append_u32(line, index, record->vision_age_ms);
         H456_CSV_COMMA();

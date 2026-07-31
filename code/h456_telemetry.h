@@ -8,7 +8,7 @@
 #include "ml_common.h"
 
 #define H456_TELEMETRY_CAPACITY       (600U)
-#define H456_TELEMETRY_RECORD_BYTES   (40U)
+#define H456_TELEMETRY_RECORD_BYTES   (44U)
 #define H456_TELEMETRY_H4_PERIOD_MS   (20U)
 #define H456_TELEMETRY_LAP_PERIOD_MS  (50U)
 
@@ -35,6 +35,8 @@ typedef struct {
     float ball_control_output_us;
     uint16_t servo_target_us;
     uint16_t servo_current_us;
+    int16_t raw_x_px;
+    int16_t raw_y_px;
     uint32_t vision_age_ms;
     uint32_t frame_interval_ms;
     bool vision_ready;

@@ -24,6 +24,8 @@
 #define H456_APP_BALL_READY_SPEED_CM_S   (1.0f)
 #define H456_APP_BALL_READY_SETTLE_MS    (500U)
 #define H456_APP_BALL_SCORE_ERROR_CM     (1.0f)
+#define H456_APP_BALL_SCORE_IMMEDIATE_CM (1.2f)
+#define H456_APP_BALL_SCORE_CONFIRM_MS   (500U)
 #define H456_APP_BALL_ABORT_ERROR_CM     (2.0f)
 #define H456_APP_BALL_ABORT_HOLD_MS      (100U)
 #define H456_APP_LAUNCH_BIAS_US          (60.0f)
@@ -66,6 +68,7 @@ typedef struct {
     float interval_error_min_cm;
     float interval_error_max_cm;
     uint32_t ball_settle_start_ms;
+    uint32_t ball_score_over_start_ms;
     uint32_t ball_abort_start_ms;
     uint32_t launch_bias_start_ms;
     uint32_t last_control_ms;
@@ -74,6 +77,7 @@ typedef struct {
     bool imu_ready;
     bool ball_settle_active;
     bool ball_settled;
+    bool ball_score_over_active;
     bool ball_abort_active;
     bool ball_violation;
     bool launch_bias_active;
@@ -492,6 +496,8 @@ static void h456_build_telemetry_sample(
     sample->ball_control_output_us = g_app.ball.control_output_us;
     sample->servo_target_us = g_app.ball.servo_target_us;
     sample->servo_current_us = g_app.ball.servo_current_us;
+    sample->raw_x_px = g_app.ball.raw_center_x_px;
+    sample->raw_y_px = g_app.ball.raw_center_y_px;
     sample->vision_age_ms = g_app.ball.vision_age_ms;
     sample->frame_interval_ms = g_app.ball.vision_frame_interval_ms;
     sample->vision_ready = g_app.ball.vision_ready;
@@ -579,6 +585,8 @@ static ml_status_t h456_start_run(chassis_status_t *status)
     g_app.interval_error_min_cm = g_app.ball.error_cm;
     g_app.interval_error_max_cm = g_app.ball.error_cm;
     g_app.ball_abort_active = false;
+    g_app.ball_score_over_active = false;
+    g_app.ball_score_over_start_ms = 0U;
     g_app.ball_violation = false;
     g_app.score_frozen = false;
     g_app.velocity_started = false;
@@ -604,8 +612,19 @@ static void h456_update_score_and_safety(
         if (absolute_error > g_app.maximum_score_error_cm) {
             g_app.maximum_score_error_cm = absolute_error;
         }
-        if (absolute_error > H456_APP_BALL_SCORE_ERROR_CM) {
+        if (absolute_error >= H456_APP_BALL_SCORE_IMMEDIATE_CM) {
             g_app.ball_violation = true;
+        } else if (absolute_error > H456_APP_BALL_SCORE_ERROR_CM) {
+            if (!g_app.ball_score_over_active) {
+                g_app.ball_score_over_active = true;
+                g_app.ball_score_over_start_ms = chassis->timestamp_ms;
+            } else if ((chassis->timestamp_ms -
+                        g_app.ball_score_over_start_ms) >=
+                       H456_APP_BALL_SCORE_CONFIRM_MS) {
+                g_app.ball_violation = true;
+            }
+        } else {
+            g_app.ball_score_over_active = false;
         }
         if (g_app.mission_output.score_point_passed) {
             g_app.score_frozen = true;

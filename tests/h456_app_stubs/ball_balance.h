@@ -40,6 +40,8 @@ typedef struct {
     float error_cm;
     float control_output_us;
     bool breakaway_fault;
+    int16_t raw_center_x_px;
+    int16_t raw_center_y_px;
     uint16_t servo_current_us;
     uint16_t servo_target_us;
     uint32_t uptime_ms;

@@ -671,6 +671,50 @@ static void test_sustained_two_cm_error_stops(void)
     assert(g_control_bias_us == 0.0f);
 }
 
+static void test_score_boundary_confirmation_gate(void)
+{
+    h456_app_status_t status;
+
+    reset_mocks();
+    assert(h456_app_init() == ML_STATUS_OK);
+    prepare_ready();
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    assert(get_status().state == H456_APP_RUNNING);
+
+    g_ball.position_cm = -1.1f;
+    poll_count(24U);
+    status = get_status();
+    assert(!status.ball_violation);
+    assert(fabsf(status.maximum_score_error_cm - 1.1f) < 0.01f);
+
+    g_ball.position_cm = 0.0f;
+    poll_count(1U);
+    assert(!get_status().ball_violation);
+
+    g_ball.position_cm = -1.1f;
+    poll_count(26U);
+    status = get_status();
+    assert(status.ball_violation);
+    assert(fabsf(status.maximum_score_error_cm - 1.1f) < 0.01f);
+}
+
+static void test_score_immediate_gate_at_one_point_two_cm(void)
+{
+    h456_app_status_t status;
+
+    reset_mocks();
+    assert(h456_app_init() == ML_STATUS_OK);
+    prepare_ready();
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    assert(get_status().state == H456_APP_RUNNING);
+
+    g_ball.position_cm = -1.2f;
+    poll_count(1U);
+    status = get_status();
+    assert(status.ball_violation);
+    assert(fabsf(status.maximum_score_error_cm - 1.2f) < 0.01f);
+}
+
 static void test_ball_score_freezes_on_pass_cycle(void)
 {
     h456_app_status_t status;
@@ -708,6 +752,8 @@ int main(void)
     test_h5_keeps_default_line_config_and_no_h4_heading_only();
     test_launch_bias_clears_on_finish();
     test_sustained_two_cm_error_stops();
+    test_score_boundary_confirmation_gate();
+    test_score_immediate_gate_at_one_point_two_cm();
     test_ball_score_freezes_on_pass_cycle();
     printf("H456 app tests passed\n");
     return 0;
