@@ -638,6 +638,150 @@ static void test_sequence_plus_position_confirm_and_final_low_speed(void)
         BALL_SEQUENCE_SETTLE_SPEED_MAX_CM_PER_S);
 }
 
+static void test_sequence_minus_braking_capture_and_recovery(void)
+{
+    ball_balance_status_t status;
+    uint32_t capture_ms;
+    uint32_t i;
+    float measured_position_cm;
+    bool braking_seen = false;
+    bool high_speed_band_seen = false;
+    bool low_speed_band_seen = false;
+
+    reset_controller();
+    capture_ms = make_vision_ready_at(BALL_SEQUENCE_PLUS_CM);
+    assert(ball_balance_start_pm5_sequence() == ML_STATUS_OK);
+    for (i = 0U; i < 20U; ++i) {
+        advance_frame(20U, capture_ms += 20U,
+            BALL_SEQUENCE_PLUS_CM, 1U);
+        assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+        if (status.sequence_state == BALL_SEQUENCE_TO_MINUS_5_CM) {
+            break;
+        }
+    }
+    assert(status.sequence_state == BALL_SEQUENCE_TO_MINUS_5_CM);
+    advance_ms(BALL_CONTROL_PERIOD_MS);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.target_velocity_cm_per_s ==
+        -BALL_SEQUENCE_MINUS_CRUISE_SPEED_CM_PER_S);
+
+    measured_position_cm = BALL_SEQUENCE_PLUS_CM;
+    for (i = 0U; i < 100U; ++i) {
+        advance_linear_measurement(&capture_ms, &measured_position_cm,
+            -8.0f);
+        assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+        if ((status.target_velocity_cm_per_s >
+             -BALL_SEQUENCE_MINUS_CRUISE_SPEED_CM_PER_S) &&
+            (fabsf(status.error_cm) > BALL_SEQUENCE_FINAL_ERROR_CM)) {
+            braking_seen = true;
+            assert(status.target_velocity_cm_per_s >=
+                -BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S);
+        }
+        if ((fabsf(status.error_cm) <= BALL_SEQUENCE_FINAL_ERROR_CM) &&
+            (fabsf(status.velocity_cm_per_s) >
+             BALL_SEQUENCE_SETTLE_SPEED_MAX_CM_PER_S)) {
+            high_speed_band_seen = true;
+            break;
+        }
+    }
+    assert(braking_seen);
+    assert(high_speed_band_seen);
+    advance_ms(BALL_CONTROL_PERIOD_MS);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.target_velocity_cm_per_s < 0.0f);
+    assert(status.target_velocity_cm_per_s >=
+        -BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S);
+
+    for (i = 0U; i < 50U; ++i) {
+        measured_position_cm = -4.5f;
+        advance_frame(20U, capture_ms += 20U,
+            measured_position_cm, 1U);
+        assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+        if ((fabsf(status.error_cm) <= BALL_SEQUENCE_FINAL_ERROR_CM) &&
+            (fabsf(status.velocity_cm_per_s) <=
+             BALL_SEQUENCE_SETTLE_SPEED_MAX_CM_PER_S)) {
+            low_speed_band_seen = true;
+            break;
+        }
+    }
+    assert(low_speed_band_seen);
+    advance_ms(BALL_CONTROL_PERIOD_MS);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.target_velocity_cm_per_s < 0.0f);
+    assert(status.target_velocity_cm_per_s >=
+        -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S);
+
+    for (i = 0U; i < 10U; ++i) {
+        measured_position_cm = -3.5f;
+        advance_frame(20U, capture_ms += 20U,
+            measured_position_cm, 1U);
+    }
+    advance_ms(BALL_CONTROL_PERIOD_MS);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.error_cm < -BALL_SEQUENCE_FINAL_ERROR_CM);
+    assert(status.target_velocity_cm_per_s >=
+        -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S);
+    assert(!status.breakaway_active);
+
+    for (i = 0U; i < 20U; ++i) {
+        advance_frame(20U, capture_ms += 20U,
+            BALL_SEQUENCE_MINUS_CM, 1U);
+        assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+        if (fabsf(status.error_cm) <=
+            BALL_SEQUENCE_MINUS_CAPTURE_DEADBAND_CM) {
+            break;
+        }
+    }
+    advance_ms(BALL_CONTROL_PERIOD_MS);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(fabsf(status.error_cm) <=
+        BALL_SEQUENCE_MINUS_CAPTURE_DEADBAND_CM);
+    assert(status.target_velocity_cm_per_s == 0.0f);
+    measured_position_cm = BALL_SEQUENCE_MINUS_CM;
+
+    for (i = 0U; i < 30U; ++i) {
+        advance_linear_measurement(&capture_ms, &measured_position_cm,
+            -8.0f);
+        assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+        if (status.error_cm > BALL_SEQUENCE_FINAL_ERROR_CM) {
+            break;
+        }
+    }
+    advance_ms(BALL_CONTROL_PERIOD_MS);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.error_cm > BALL_SEQUENCE_FINAL_ERROR_CM);
+    assert(status.target_velocity_cm_per_s > 0.0f);
+    assert(status.target_velocity_cm_per_s <=
+        BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S);
+
+    for (i = 0U; i < 40U; ++i) {
+        advance_linear_measurement(&capture_ms, &measured_position_cm,
+            8.0f);
+        assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+        assert(!status.breakaway_active);
+        if (status.error_cm < -BALL_SEQUENCE_FINAL_ERROR_CM) {
+            break;
+        }
+    }
+    advance_ms(BALL_CONTROL_PERIOD_MS);
+    assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+    assert(status.error_cm < -BALL_SEQUENCE_FINAL_ERROR_CM);
+    assert(status.target_velocity_cm_per_s < 0.0f);
+    assert(status.target_velocity_cm_per_s >=
+        -BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S);
+
+    for (i = 0U; i < 80U; ++i) {
+        advance_frame(20U, capture_ms += 20U,
+            measured_position_cm, 1U);
+        assert(ball_balance_get_status(&status) == ML_STATUS_OK);
+        if (status.breakaway_active) {
+            break;
+        }
+    }
+    assert(status.breakaway_active);
+    assert(status.servo_target_us == BALL_BREAKAWAY_SERVO_MAXIMUM_US);
+}
+
 static void test_complete_sequence_and_hold(void)
 {
     ball_balance_status_t status;
@@ -1663,14 +1807,26 @@ int main(void)
     assert(BALL_SEQUENCE_BRAKE_ACCEL_CM_PER_S2 == 45.0f);
     assert(BALL_SEQUENCE_BRAKE_MARGIN_CM == 0.15f);
     assert(BALL_SEQUENCE_APPROACH_KP_PER_S == 4.0f);
+    assert(BALL_SEQUENCE_MINUS_CRUISE_SPEED_CM_PER_S == 5.0f);
+    assert(BALL_SEQUENCE_MINUS_BRAKE_ACCEL_CM_PER_S2 == 8.0f);
+    assert(BALL_SEQUENCE_MINUS_BRAKE_MARGIN_CM == 0.30f);
+    assert(BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S == 2.0f);
+    assert(BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S == 3.0f);
+    assert(BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM == 0.80f);
+    assert(BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S == 2.0f);
+    assert(BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S == 3.0f);
+    assert(BALL_SEQUENCE_MINUS_CAPTURE_DEADBAND_CM == 0.15f);
+    assert(BALL_SEQUENCE_MINUS_BRAKE_SPEED_KD_US_PER_CM_PER_S2 == 3.0f);
     assert(BALL_BREAKAWAY_ERROR_MINIMUM_CM == 0.9f);
     assert(BALL_BREAKAWAY_STATIONARY_SPEED_MAX_CM_PER_S == 0.3f);
+    assert(BALL_SEQUENCE_MINUS_BREAKAWAY_ARM_SPEED_MAX_CM_PER_S == 1.0f);
     assert(BALL_BREAKAWAY_RELEASE_SPEED_CM_PER_S == 0.5f);
     assert(BALL_BREAKAWAY_RELEASE_DISPLACEMENT_CM == 0.15f);
     assert(BALL_BREAKAWAY_AWAY_DISPLACEMENT_CM == 0.15f);
     assert(BALL_BREAKAWAY_RELEASE_CONFIRM_MS == 60U);
     assert(BALL_SEQUENCE_BREAKAWAY_RELEASE_CONFIRM_MS == 30U);
     assert(BALL_BREAKAWAY_ARM_MS == 300U);
+    assert(BALL_SEQUENCE_MINUS_CAPTURE_BREAKAWAY_ARM_MS == 100U);
     assert(BALL_SEQUENCE_BREAKAWAY_ARM_PROGRESS_CM == 0.15f);
     assert(BALL_BREAKAWAY_RAMP_US_PER_S == 50.0f);
     assert(BALL_SEQUENCE_BREAKAWAY_RAMP_US_PER_S == 100.0f);
@@ -1706,6 +1862,7 @@ int main(void)
     test_vision_loss_and_reacquire();
     test_invalid_frame_clears_sequence_settle();
     test_sequence_plus_position_confirm_and_final_low_speed();
+    test_sequence_minus_braking_capture_and_recovery();
     test_complete_sequence_and_hold();
     test_sequence_breakaway_threshold_direction_and_release();
     test_sequence_breakaway_final_tolerance_and_fault();

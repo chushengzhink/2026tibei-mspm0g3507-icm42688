@@ -26,6 +26,7 @@ typedef struct {
     bool sequence_started_once;
     bool sequence_vision_reacquiring;
     bool sequence_approach_braking;
+    bool sequence_endpoint_captured;
     bool breakaway_active;
     bool breakaway_second_stage;
     bool brake_active;
@@ -112,7 +113,6 @@ static void ball_reset_pid_state(void)
     g_ball.control_output_us = 0.0f;
     g_ball.previous_velocity_cm_per_s = g_ball.velocity_cm_per_s;
     g_ball.filtered_acceleration_cm_per_s2 = 0.0f;
-    g_ball.sequence_approach_braking = false;
     g_ball.breakaway_active = false;
     g_ball.breakaway_second_stage = false;
     g_ball.brake_active = false;
@@ -123,6 +123,12 @@ static void ball_reset_pid_state(void)
     g_ball.breakaway_start_position_cm = 0.0f;
     g_ball.breakaway_direction = 0.0f;
     g_ball.last_control_ms = ball_now_ms();
+}
+
+static void ball_reset_sequence_planner(void)
+{
+    g_ball.sequence_approach_braking = false;
+    g_ball.sequence_endpoint_captured = false;
 }
 
 static void ball_recenter(void)
@@ -313,13 +319,20 @@ static bool ball_update_breakaway(void)
     bool sequence_running = ball_sequence_is_running();
     bool sequence_plus =
         g_ball.sequence_state == BALL_SEQUENCE_TO_PLUS_5_CM;
+    bool sequence_minus =
+        g_ball.sequence_state == BALL_SEQUENCE_TO_MINUS_5_CM;
     bool stationary;
     bool release_candidate;
     float toward_displacement_cm;
     float toward_velocity_cm_per_s;
     float increment_us;
+    uint32_t arm_ms;
     uint32_t release_confirm_ms;
     uint32_t maximum_hold_ms;
+
+    arm_ms = (sequence_minus && g_ball.sequence_endpoint_captured) ?
+        BALL_SEQUENCE_MINUS_CAPTURE_BREAKAWAY_ARM_MS :
+        BALL_BREAKAWAY_ARM_MS;
 
     if (!ball_breakaway_is_available() ||
         !ball_breakaway_error_is_large_enough()) {
@@ -339,6 +352,14 @@ static bool ball_update_breakaway(void)
                 (g_ball.position_cm -
                  g_ball.breakaway_start_position_cm) *
                 g_ball.breakaway_direction;
+            toward_velocity_cm_per_s =
+                g_ball.velocity_cm_per_s * g_ball.breakaway_direction;
+            if (sequence_minus &&
+                (toward_velocity_cm_per_s <
+                 -BALL_SEQUENCE_MINUS_BREAKAWAY_ARM_SPEED_MAX_CM_PER_S)) {
+                ball_clear_breakaway_transient();
+                return false;
+            }
             if (toward_displacement_cm >=
                 BALL_SEQUENCE_BREAKAWAY_ARM_PROGRESS_CM) {
                 g_ball.breakaway_stationary_ms = 0U;
@@ -373,14 +394,21 @@ static bool ball_update_breakaway(void)
         }
     }
 
-    if (g_ball.breakaway_stationary_ms < BALL_BREAKAWAY_ARM_MS) {
+    if (g_ball.breakaway_stationary_ms < arm_ms) {
         g_ball.breakaway_stationary_ms += BALL_CONTROL_PERIOD_MS;
-        if (g_ball.breakaway_stationary_ms > BALL_BREAKAWAY_ARM_MS) {
-            g_ball.breakaway_stationary_ms = BALL_BREAKAWAY_ARM_MS;
+        if (g_ball.breakaway_stationary_ms > arm_ms) {
+            g_ball.breakaway_stationary_ms = arm_ms;
         }
-        if (g_ball.breakaway_stationary_ms < BALL_BREAKAWAY_ARM_MS) {
+        if (g_ball.breakaway_stationary_ms < arm_ms) {
             return true;
         }
+    }
+
+    if (!g_ball.breakaway_active && sequence_minus &&
+        (ball_abs(g_ball.velocity_cm_per_s) >
+         BALL_SEQUENCE_MINUS_BREAKAWAY_ARM_SPEED_MAX_CM_PER_S)) {
+        ball_clear_breakaway_transient();
+        return false;
     }
 
     if (!g_ball.breakaway_active) {
@@ -503,19 +531,16 @@ static bool ball_breakaway_servo_at_limit(void)
     return false;
 }
 
-static float ball_sequence_velocity_reference(void)
+static float ball_sequence_plus_velocity_reference(void)
 {
     float absolute_error_cm = ball_abs(g_ball.error_cm);
-    float allowed_error_cm =
-        (g_ball.sequence_state == BALL_SEQUENCE_TO_PLUS_5_CM) ?
-        BALL_SEQUENCE_PLUS_ERROR_CM : BALL_SEQUENCE_FINAL_ERROR_CM;
     float direction = (g_ball.error_cm < 0.0f) ? -1.0f : 1.0f;
     float toward_velocity_cm_per_s =
         direction * g_ball.velocity_cm_per_s;
     float stopping_distance_cm = 0.0f;
     float target_velocity_cm_per_s;
 
-    if (absolute_error_cm <= allowed_error_cm) {
+    if (absolute_error_cm <= BALL_SEQUENCE_PLUS_ERROR_CM) {
         return 0.0f;
     }
     if (toward_velocity_cm_per_s > 0.0f) {
@@ -539,6 +564,74 @@ static float ball_sequence_velocity_reference(void)
         BALL_SEQUENCE_CRUISE_SPEED_CM_PER_S);
 }
 
+static float ball_sequence_minus_velocity_reference(void)
+{
+    float absolute_error_cm = ball_abs(g_ball.error_cm);
+    float toward_velocity_cm_per_s = -g_ball.velocity_cm_per_s;
+    float stopping_distance_cm = 0.0f;
+    float target_velocity_cm_per_s;
+    float speed_limit_cm_per_s;
+
+    if (toward_velocity_cm_per_s > 0.0f) {
+        stopping_distance_cm =
+            (toward_velocity_cm_per_s * toward_velocity_cm_per_s) /
+            (2.0f * BALL_SEQUENCE_MINUS_BRAKE_ACCEL_CM_PER_S2);
+    }
+    if (!g_ball.sequence_approach_braking &&
+        (absolute_error_cm <=
+         (stopping_distance_cm +
+          BALL_SEQUENCE_MINUS_BRAKE_MARGIN_CM))) {
+        g_ball.sequence_approach_braking = true;
+    }
+
+    if (!g_ball.sequence_approach_braking) {
+        return -BALL_SEQUENCE_MINUS_CRUISE_SPEED_CM_PER_S;
+    }
+
+    if (g_ball.sequence_endpoint_captured) {
+        if (absolute_error_cm <=
+            BALL_SEQUENCE_MINUS_CAPTURE_DEADBAND_CM) {
+            return 0.0f;
+        }
+        speed_limit_cm_per_s =
+            BALL_SEQUENCE_MINUS_RECOVERY_SPEED_LIMIT_CM_PER_S;
+        target_velocity_cm_per_s =
+            BALL_SEQUENCE_MINUS_CAPTURE_KP_PER_S * g_ball.error_cm;
+    } else {
+        speed_limit_cm_per_s =
+            BALL_SEQUENCE_MINUS_APPROACH_SPEED_LIMIT_CM_PER_S;
+        target_velocity_cm_per_s =
+            BALL_SEQUENCE_MINUS_APPROACH_KP_PER_S * g_ball.error_cm;
+    }
+    return ball_clamp(target_velocity_cm_per_s,
+        -speed_limit_cm_per_s, speed_limit_cm_per_s);
+}
+
+static float ball_sequence_velocity_reference(void)
+{
+    if (g_ball.sequence_state == BALL_SEQUENCE_TO_MINUS_5_CM) {
+        return ball_sequence_minus_velocity_reference();
+    }
+    return ball_sequence_plus_velocity_reference();
+}
+
+static void ball_update_sequence_capture(void)
+{
+    if ((g_ball.sequence_state != BALL_SEQUENCE_TO_MINUS_5_CM) ||
+        g_ball.sequence_endpoint_captured) {
+        return;
+    }
+    if (((ball_abs(g_ball.error_cm) <=
+          BALL_SEQUENCE_MINUS_CAPTURE_ERROR_CM) &&
+         (ball_abs(g_ball.velocity_cm_per_s) <=
+          BALL_SEQUENCE_SETTLE_SPEED_MAX_CM_PER_S)) ||
+        (g_ball.error_cm >= 0.0f)) {
+        g_ball.sequence_approach_braking = true;
+        g_ball.sequence_endpoint_captured = true;
+        ball_clear_breakaway_transient();
+    }
+}
+
 static void ball_run_controller(void)
 {
     float candidate_integral;
@@ -555,6 +648,7 @@ static void ball_run_controller(void)
     float speed_kd_us_per_cm_per_s2;
 
     g_ball.error_cm = g_ball.target_cm - g_ball.position_cm;
+    ball_update_sequence_capture();
     acceleration = (g_ball.velocity_cm_per_s -
         g_ball.previous_velocity_cm_per_s) /
         ((float) BALL_CONTROL_PERIOD_MS / 1000.0f);
@@ -640,9 +734,17 @@ static void ball_run_controller(void)
     g_ball.target_velocity_cm_per_s = target_velocity;
     g_ball.speed_error_cm_per_s =
         target_velocity - g_ball.velocity_cm_per_s;
-    speed_kd_us_per_cm_per_s2 = ball_sequence_is_running() ?
-        BALL_SEQUENCE_SPEED_KD_US_PER_CM_PER_S2 :
-        BALL_SPEED_KD_US_PER_CM_PER_S2;
+    if ((g_ball.sequence_state == BALL_SEQUENCE_TO_MINUS_5_CM) &&
+        g_ball.sequence_approach_braking) {
+        speed_kd_us_per_cm_per_s2 =
+            BALL_SEQUENCE_MINUS_BRAKE_SPEED_KD_US_PER_CM_PER_S2;
+    } else if (ball_sequence_is_running()) {
+        speed_kd_us_per_cm_per_s2 =
+            BALL_SEQUENCE_SPEED_KD_US_PER_CM_PER_S2;
+    } else {
+        speed_kd_us_per_cm_per_s2 =
+            BALL_SPEED_KD_US_PER_CM_PER_S2;
+    }
     if (g_ball.brake_active) {
         candidate_control = ball_sequence_brake_control_us();
     } else if (sequence_direct_breakaway) {
@@ -676,6 +778,7 @@ static void ball_stop_sequence(ball_balance_sequence_state_t reason,
         g_ball.sequence_elapsed_ms = now_ms - g_ball.sequence_start_ms;
     }
     g_ball.sequence_state = reason;
+    ball_reset_sequence_planner();
     g_ball.sequence_settle_active = false;
     g_ball.sequence_vision_reacquiring = false;
     g_ball.enabled = false;
@@ -899,9 +1002,11 @@ static void ball_update_sequence(uint32_t now_ms)
     g_ball.sequence_settle_active = false;
     if (g_ball.sequence_state == BALL_SEQUENCE_TO_PLUS_5_CM) {
         g_ball.sequence_state = BALL_SEQUENCE_TO_MINUS_5_CM;
+        ball_reset_sequence_planner();
         ball_set_internal_target(BALL_SEQUENCE_MINUS_CM);
     } else {
         g_ball.sequence_state = BALL_SEQUENCE_COMPLETE;
+        ball_reset_sequence_planner();
         g_ball.brake_active = false;
         g_ball.sequence_elapsed_ms = now_ms - g_ball.sequence_start_ms;
     }
@@ -1082,6 +1187,7 @@ ml_status_t ball_balance_set_target_cm(float target_cm)
 
     g_ball.sequence_state = BALL_SEQUENCE_IDLE;
     g_ball.sequence_settle_active = false;
+    ball_reset_sequence_planner();
     ball_set_internal_target(target_cm);
     return ML_STATUS_OK;
 }
@@ -1104,6 +1210,7 @@ ml_status_t ball_balance_start_pm5_sequence(void)
     g_ball.manual_servo_offset_us = 0;
     g_ball.state = BALL_BALANCE_ACTIVE;
     g_ball.sequence_state = BALL_SEQUENCE_TO_PLUS_5_CM;
+    ball_reset_sequence_planner();
     g_ball.sequence_started_once = true;
     g_ball.sequence_start_ms = ball_now_ms();
     g_ball.sequence_elapsed_ms = 0U;
