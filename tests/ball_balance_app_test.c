@@ -564,7 +564,7 @@ static void test_formal_wait_start_complete_and_export(void)
     g_status.servo_target_us = 1540U;
     g_status.servo_current_us = 1540U;
     poll_count(1U);
-    assert(strcmp(g_oled_lines[0], "BALL HOLD -5    ") == 0);
+    assert(strcmp(g_oled_lines[0], "HOLD -5 T4200   ") == 0);
     assert(g_last_telemetry_status.sequence_state ==
         BALL_SEQUENCE_COMPLETE);
     assert(g_last_telemetry_status.sequence_elapsed_ms == 4200U);

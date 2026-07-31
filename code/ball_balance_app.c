@@ -331,7 +331,7 @@ static void ball_app_display(const ball_balance_status_t *status)
     ball_app_write_unsigned(lines[2], 7U,
         ball_app_clamp_u32(status->servo_current_us, 9999U), 4U);
 
-    ball_app_copy_line(lines[3], "S0000 A000 E00");
+    ball_app_copy_line(lines[3], "T0000 A000 E00");
     ball_app_write_unsigned(lines[3], 1U,
         ball_app_clamp_u32(status->sequence_elapsed_ms, 9999U), 4U);
     age_ms = (status->vision_age_ms == 0xFFFFFFFFUL) ?
@@ -409,11 +409,14 @@ static bool ball_app_display_allowed(
         !(status->enabled && sequence_holding);
 }
 
-static void ball_app_display_sequence_complete(void)
+static void ball_app_display_sequence_complete(
+    const ball_balance_status_t *status)
 {
     char line[OLED_TEXT_COLUMN_COUNT + 1U];
 
-    ball_app_copy_line(line, "BALL HOLD -5");
+    ball_app_copy_line(line, "HOLD -5 T0000");
+    ball_app_write_unsigned(line, 9U,
+        ball_app_clamp_u32(status->sequence_elapsed_ms, 9999U), 4U);
     (void) OLED_ShowLine(1U, line);
 }
 
@@ -635,7 +638,7 @@ void ball_balance_app_poll(void)
     if (!g_app.calibration_mode &&
         (status.sequence_state == BALL_SEQUENCE_COMPLETE) &&
         !g_app.sequence_complete_displayed) {
-        ball_app_display_sequence_complete();
+            ball_app_display_sequence_complete(&status);
         g_app.sequence_complete_displayed = true;
         g_app.last_display_ms = status.uptime_ms;
     }
