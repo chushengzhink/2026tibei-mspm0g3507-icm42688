@@ -11,6 +11,8 @@ JLinkSettings.ini
 # Temporary and operating-system files
 __pycache__/
 tmp/ball_armcc/
+tmp/q3_armcc/
+tmp/q3_host/
 *.tmp
 *.temp
 *.bak

@@ -1,21 +1,21 @@
-#ifndef H456_TELEMETRY_H
-#define H456_TELEMETRY_H
+#ifndef H5_TELEMETRY_H
+#define H5_TELEMETRY_H
 
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "h456_mission.h"
+#include "h5_mission.h"
 #include "ml_common.h"
 
-#define H456_TELEMETRY_CAPACITY       (600U)
-#define H456_TELEMETRY_RECORD_BYTES   (44U)
-#define H456_TELEMETRY_H4_PERIOD_MS   (20U)
-#define H456_TELEMETRY_LAP_PERIOD_MS  (60U)
+#define H5_TELEMETRY_CAPACITY       (600U)
+#define H5_TELEMETRY_RECORD_BYTES   (44U)
+#define H5_TELEMETRY_H5_PERIOD_MS   (50U)
+#define H5_TELEMETRY_LAP_PERIOD_MS  (50U)
 
 typedef struct {
     uint16_t timestamp_ms;
-    h456_mode_t mode;
-    h456_mission_state_t mission_state;
+    h5_mode_t mode;
+    h5_mission_state_t mission_state;
     float progress_mm;
     float fused_heading_deg;
     float expected_heading_deg;
@@ -46,22 +46,22 @@ typedef struct {
     bool ball_violation;
     bool breakaway_fault;
     bool score_point_passed;
-} h456_telemetry_sample_t;
+} h5_telemetry_sample_t;
 
-ml_status_t h456_telemetry_init(void);
-void h456_telemetry_session_start(
-    h456_mode_t mode, uint32_t start_time_ms);
-ml_status_t h456_telemetry_record(
-    const h456_telemetry_sample_t *sample, bool force);
-void h456_telemetry_session_finish(
-    const h456_telemetry_sample_t *sample);
-void h456_telemetry_set_result(uint32_t score_elapsed_ms,
+ml_status_t h5_telemetry_init(void);
+void h5_telemetry_session_start(
+    h5_mode_t mode, uint32_t start_time_ms);
+ml_status_t h5_telemetry_record(
+    const h5_telemetry_sample_t *sample, bool force);
+void h5_telemetry_session_finish(
+    const h5_telemetry_sample_t *sample);
+void h5_telemetry_set_result(uint32_t score_elapsed_ms,
     float maximum_ball_error_cm, bool ball_score_passed);
-bool h456_telemetry_session_active(void);
-uint16_t h456_telemetry_count(void);
-bool h456_telemetry_full(void);
-uint32_t h456_telemetry_storage_bytes(void);
-ml_status_t h456_telemetry_uart0_handle_byte(
+bool h5_telemetry_session_active(void);
+uint16_t h5_telemetry_count(void);
+bool h5_telemetry_full(void);
+uint32_t h5_telemetry_storage_bytes(void);
+ml_status_t h5_telemetry_uart0_handle_byte(
     uint8_t byte, bool export_allowed, uint32_t now_ms);
 
 #endif

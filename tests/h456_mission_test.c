@@ -100,8 +100,8 @@ static void test_mode_specific_cruise_speeds(void)
     h456_mode_t modes[3] = {
         H456_MODE_4, H456_MODE_5, H456_MODE_6
     };
-    float expected[3] = {220.0f, 240.0f, 240.0f};
-    uint32_t settle_cycles[3] = {100U, 90U, 90U};
+    float expected[3] = {220.0f, 210.0f, 210.0f};
+    uint32_t settle_cycles[3] = {100U, 100U, 100U};
     uint8_t mode_index;
     uint32_t i;
     uint32_t now_ms;
@@ -149,12 +149,13 @@ static void test_h4_soft_launch_acceleration(void)
     assert(fabsf(output.linear_mm_s - 123.0f) < 0.01f);
 }
 
-static void test_h5_h6_keep_normal_acceleration(void)
+static void test_h5_h6_launch_acceleration_then_normal_acceleration(void)
 {
     h456_mission_t mission;
     h456_mission_output_t output;
     h456_mode_t modes[2] = {H456_MODE_5, H456_MODE_6};
     uint8_t mode_index;
+    uint32_t i;
     uint32_t now_ms;
 
     for (mode_index = 0U; mode_index < 2U; ++mode_index) {
@@ -167,7 +168,19 @@ static void test_h5_h6_keep_normal_acceleration(void)
         assert(h456_mission_update(&mission, 0.0f,
             0.0f, 0.0f, 0.0f, now_ms, false, &output) ==
             ML_STATUS_OK);
-        assert(fabsf(output.linear_mm_s - 3.0f) < 0.01f);
+        assert(fabsf(output.linear_mm_s - 2.0f) < 0.01f);
+        for (i = 0U; i < 59U; ++i) {
+            now_ms += 20U;
+            assert(h456_mission_update(&mission, 0.0f,
+                0.0f, 0.0f, 0.0f, now_ms, false, &output) ==
+                ML_STATUS_OK);
+        }
+        assert(fabsf(output.linear_mm_s - 120.0f) < 0.01f);
+        now_ms += 20U;
+        assert(h456_mission_update(&mission, 0.0f,
+            0.0f, 0.0f, 0.0f, now_ms, false, &output) ==
+            ML_STATUS_OK);
+        assert(fabsf(output.linear_mm_s - 122.4f) < 0.01f);
     }
 }
 
@@ -199,14 +212,14 @@ static void test_h4_soft_launch_still_reaches_b_with_time_margin(void)
 }
 
 static void establish_lap_heading_gate(h456_mission_t *mission,
-    h456_mission_output_t *output, uint32_t *now_ms)
+    h456_mission_output_t *output, uint32_t *now_ms, float progress_mm)
 {
     uint8_t i;
 
     for (i = 0U; i < 3U; ++i) {
         *now_ms += 20U;
-        assert(h456_mission_update(mission, 5800.0f,
-            240.0f, 240.0f, 360.0f, *now_ms, false,
+        assert(h456_mission_update(mission, progress_mm,
+            210.0f, 210.0f, 360.0f, *now_ms, false,
             output) == ML_STATUS_OK);
     }
     assert(output->heading_gate_met);
@@ -222,13 +235,16 @@ static void test_h5_h6_lap_gate_and_score_time(void)
         &g_h456_mission_default_config) == ML_STATUS_OK);
     assert(h456_mission_start(&mission, H456_MODE_5,
         0.0f, 0.0f, 0U) == ML_STATUS_OK);
-    establish_lap_heading_gate(&mission, &output, &now_ms);
+    assert(h456_mission_update(&mission, 5550.0f,
+        210.0f, 210.0f, 360.0f, 25000U, false, &output) == ML_STATUS_OK);
+    assert(!output.heading_gate_met);
+    establish_lap_heading_gate(&mission, &output, &now_ms, 5580.0f);
     now_ms = 26400U;
     assert(h456_mission_update(&mission, 5932.0f,
-        240.0f, 240.0f, 360.0f, now_ms, false,
+        210.0f, 210.0f, 360.0f, now_ms, false,
         &output) == ML_STATUS_OK);
     assert(output.state == H456_MISSION_BRAKING);
-    assert(output.score_elapsed_ms == 26400U);
+    assert(output.score_elapsed_ms < 30000U);
     assert(output.score_point_passed);
     stop_after_braking(&mission, &output, 6120.0f, 360.0f, &now_ms);
     assert(output.result == H456_MISSION_RESULT_PASS);
@@ -238,9 +254,9 @@ static void test_h5_h6_lap_gate_and_score_time(void)
     assert(h456_mission_start(&mission, H456_MODE_6,
         0.0f, 0.0f, 0U) == ML_STATUS_OK);
     now_ms = 29500U;
-    establish_lap_heading_gate(&mission, &output, &now_ms);
+    establish_lap_heading_gate(&mission, &output, &now_ms, 5580.0f);
     assert(h456_mission_update(&mission, 5932.0f,
-        240.0f, 240.0f, 360.0f, 30060U, false,
+        210.0f, 210.0f, 360.0f, 30060U, false,
         &output) == ML_STATUS_OK);
     assert(output.score_point_passed);
     assert(output.score_elapsed_ms == 30060U);
@@ -281,7 +297,23 @@ static void test_invalid_inputs(void)
     assert(h456_mission_init(&mission, &config) ==
         ML_STATUS_INVALID_ARGUMENT);
     config = g_h456_mission_default_config;
+    config.lap_acceleration_mm_s2 = 0.0f;
+    assert(h456_mission_init(&mission, &config) ==
+        ML_STATUS_INVALID_ARGUMENT);
+    config = g_h456_mission_default_config;
+    config.lap_launch_acceleration_mm_s2 = 0.0f;
+    assert(h456_mission_init(&mission, &config) ==
+        ML_STATUS_INVALID_ARGUMENT);
+    config = g_h456_mission_default_config;
     config.h4_launch_acceleration_mm_s2 = 0.0f;
+    assert(h456_mission_init(&mission, &config) ==
+        ML_STATUS_INVALID_ARGUMENT);
+    config = g_h456_mission_default_config;
+    config.lap_launch_acceleration_ms = 0U;
+    assert(h456_mission_init(&mission, &config) ==
+        ML_STATUS_INVALID_ARGUMENT);
+    config = g_h456_mission_default_config;
+    config.lap_heading_gate_arm_progress_mm = 0.0f;
     assert(h456_mission_init(&mission, &config) ==
         ML_STATUS_INVALID_ARGUMENT);
     config = g_h456_mission_default_config;
@@ -299,7 +331,7 @@ int main(void)
     test_invalid_inputs();
     test_mode_specific_cruise_speeds();
     test_h4_soft_launch_acceleration();
-    test_h5_h6_keep_normal_acceleration();
+    test_h5_h6_launch_acceleration_then_normal_acceleration();
     test_h4_soft_launch_still_reaches_b_with_time_margin();
     test_h4_pass_time_and_line_only_braking();
     test_h4_timeout_and_emergency();

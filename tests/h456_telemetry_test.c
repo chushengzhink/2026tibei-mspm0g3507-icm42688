@@ -41,6 +41,9 @@ static h456_telemetry_sample_t make_sample(uint32_t timestamp_ms,
     sample.mission_state = H456_MISSION_RUNNING;
     sample.progress_mm = 1234.0f;
     sample.fused_heading_deg = 356.25f;
+    sample.expected_heading_deg = 281.41f;
+    sample.heading_error_deg = -12.77f;
+    sample.heading_gate_met = true;
     sample.target_center_mm_s = 240.0f;
     sample.actual_center_mm_s = 235.5f;
     sample.pwm_left_count = 12345U;
@@ -58,7 +61,6 @@ static h456_telemetry_sample_t make_sample(uint32_t timestamp_ms,
     sample.servo_target_us = 1483U;
     sample.servo_current_us = 1491U;
     sample.raw_x_px = -42;
-    sample.raw_y_px = 119;
     sample.vision_age_ms = 15U;
     sample.frame_interval_ms = 33U;
     sample.vision_ready = true;
@@ -66,7 +68,7 @@ static h456_telemetry_sample_t make_sample(uint32_t timestamp_ms,
     return sample;
 }
 
-static void assert_csv_has_34_columns(const char *csv)
+static void assert_csv_has_35_columns(const char *csv)
 {
     uint32_t commas = 0U;
     uint32_t lines = 0U;
@@ -75,7 +77,7 @@ static void assert_csv_has_34_columns(const char *csv)
         if (*csv == ',') {
             ++commas;
         } else if (*csv == '\r') {
-            assert(commas == 33U);
+            assert(commas == 34U);
             commas = 0U;
             ++lines;
         }
@@ -119,14 +121,16 @@ static void test_period_export_and_commands(void)
         ML_STATUS_OK);
     assert(strncmp(g_uart_capture, "time_ms,mode,mission_state,",
         strlen("time_ms,mode,mission_state,")) == 0);
-    assert(strstr(g_uart_capture, "raw_x_px,raw_y_px") != 0);
     assert(strstr(g_uart_capture,
-        "0,4,1,7050,0,1.125,0,1234,356.25,240.0,235.5,") != 0);
+        "fused_heading_deg,expected_heading_deg,heading_error_deg,"
+        "heading_gate_met,target_center_mm_s,actual_center_mm_s,") != 0);
     assert(strstr(g_uart_capture,
-        "1483,1491,-42,119,15,33,1,1,0,0") != 0);
+        "0,4,1,7050,0,1.125,0,1234,356.25,281.41,-12.77,1,240.0,235.5,") != 0);
     assert(strstr(g_uart_capture,
-        "30,4,3,7050,0,1.125,1,1234,356.25,240.0,235.5,") != 0);
-    assert_csv_has_34_columns(g_uart_capture);
+        "1483,1491,-42,15,1,1,0,0") != 0);
+    assert(strstr(g_uart_capture,
+        "30,4,3,7050,0,1.125,1,1234,356.25,281.41,-12.77,1,240.0,235.5,") != 0);
+    assert_csv_has_35_columns(g_uart_capture);
     assert(h456_telemetry_uart0_handle_byte('C', true, 1030U) ==
         ML_STATUS_OK);
     assert(h456_telemetry_count() == 0U);
@@ -140,15 +144,15 @@ static void test_lap_period_capacity_and_terminal_replace(void)
     assert(h456_telemetry_init() == ML_STATUS_OK);
     h456_telemetry_session_start(H456_MODE_5, 0U);
     assert(h456_telemetry_record(&sample, false) == ML_STATUS_OK);
-    sample.timestamp_ms = 49U;
+    sample.timestamp_ms = 59U;
     assert(h456_telemetry_record(&sample, false) == ML_STATUS_BUSY);
     for (i = 1U; i < H456_TELEMETRY_CAPACITY; ++i) {
-        sample.timestamp_ms = (uint32_t) i * 50U;
+        sample.timestamp_ms = (uint32_t) i * 60U;
         assert(h456_telemetry_record(&sample, false) == ML_STATUS_OK);
     }
     assert(h456_telemetry_count() == H456_TELEMETRY_CAPACITY);
     assert(h456_telemetry_full());
-    sample.timestamp_ms = 30000U;
+    sample.timestamp_ms = 36000U;
     assert(h456_telemetry_record(&sample, false) ==
         ML_STATUS_BUFFER_FULL);
     sample.mission_state = H456_MISSION_COMPLETE;
@@ -157,7 +161,7 @@ static void test_lap_period_capacity_and_terminal_replace(void)
     reset_uart();
     assert(h456_telemetry_uart0_handle_byte('D', true, 30000U) ==
         ML_STATUS_OK);
-    assert(strstr(g_uart_capture, "30000,5,3,") != 0);
+    assert(strstr(g_uart_capture, "36000,5,3,") != 0);
 }
 
 static void test_busy_rate_limit(void)

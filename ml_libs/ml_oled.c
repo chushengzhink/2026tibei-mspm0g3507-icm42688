@@ -10,7 +10,7 @@ static ml_soft_i2c_bus_t g_oled_i2c_bus = {
     ML_OLED_SCL_IOMUX,
     ML_OLED_SDA_PIN,
     ML_OLED_SDA_IOMUX,
-    ML_SOFT_I2C_HALF_PERIOD_US,
+    ML_OLED_I2C_HALF_PERIOD_US,
     ML_SOFT_I2C_TIMEOUT_US,
     false
 };
@@ -319,18 +319,32 @@ ml_status_t OLED_Init(void)
     static const uint8_t init_commands[] = {
         0xAEU, 0xD5U, 0x80U, 0xA8U, 0x3FU, 0xD3U, 0x00U, 0x40U,
         0xA1U, 0xC8U, 0xDAU, 0x12U, 0x81U, 0xCFU, 0xD9U, 0xF1U,
-        0xDBU, 0x30U, 0xA4U, 0xA6U, 0x8DU, 0x14U, 0xAFU
+        0xDBU, 0x30U, 0xA4U, 0xA6U, 0x8DU, 0x14U
     };
     ml_status_t status;
 
     delay_ms(100U);
     status = soft_i2c_init(&g_oled_i2c_bus);
     if (status == ML_STATUS_OK) {
+        /* Every OLED init starts from a known idle bus, even if a previous
+         * transfer failed while both lines later drifted high. */
+        status = soft_i2c_recover(&g_oled_i2c_bus);
+    }
+    if (status == ML_STATUS_OK) {
+        status = soft_i2c_init(&g_oled_i2c_bus);
+    }
+    if (status == ML_STATUS_OK) {
         status = oled_write_payload(
             0x00U, init_commands, sizeof(init_commands));
     }
     if (status == ML_STATUS_OK) {
         status = OLED_Clear();
+    }
+    if (status == ML_STATUS_OK) {
+        /* Keep the panel off until all eight pages have been cleared.  This
+         * prevents stale or half-cleared RAM from appearing during reset or
+         * immediately after a new firmware download. */
+        status = OLED_WriteCommand(0xAFU);
     }
     return status;
 }

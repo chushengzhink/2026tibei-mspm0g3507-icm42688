@@ -101,6 +101,29 @@ static ml_status_t soft_i2c_stop_condition(ml_soft_i2c_bus_t *bus)
     return status;
 }
 
+/*
+ * A failed byte transaction can leave a slave waiting for the next clock
+ * edge, or leave SDA/SCL driven by the MCU.  Always restore an idle bus
+ * before returning the original error to the caller.  The recovery result
+ * is deliberately not returned: it must not hide the failure which caused
+ * the recovery.
+ */
+static ml_status_t soft_i2c_abort_transaction(
+    ml_soft_i2c_bus_t *bus, ml_status_t failure)
+{
+    ml_status_t recovery_status;
+
+    if ((bus == 0) || !bus->initialized) {
+        return failure;
+    }
+    recovery_status = soft_i2c_recover(bus);
+    if (recovery_status != ML_STATUS_OK) {
+        /* A later init must reconfigure and probe the lines from scratch. */
+        bus->initialized = false;
+    }
+    return failure;
+}
+
 static ml_status_t soft_i2c_write_byte(
     ml_soft_i2c_bus_t *bus, uint8_t byte)
 {
@@ -193,6 +216,7 @@ ml_status_t soft_i2c_recover(ml_soft_i2c_bus_t *bus)
         soft_i2c_delay(bus);
         status = soft_i2c_release_scl(bus);
         if (status != ML_STATUS_OK) {
+            bus->initialized = false;
             return status;
         }
         if (soft_i2c_read_line(bus, bus->sda_pin)) {
@@ -200,7 +224,11 @@ ml_status_t soft_i2c_recover(ml_soft_i2c_bus_t *bus)
         }
     }
     bus->initialized = true;
-    return soft_i2c_stop_condition(bus);
+    status = soft_i2c_stop_condition(bus);
+    if (status != ML_STATUS_OK) {
+        bus->initialized = false;
+    }
+    return status;
 }
 
 ml_status_t soft_i2c_init(ml_soft_i2c_bus_t *bus)
@@ -248,7 +276,7 @@ ml_status_t soft_i2c_write(ml_soft_i2c_bus_t *bus, uint8_t address_7bit,
         }
     }
     if (status != ML_STATUS_OK) {
-        return status;
+        return soft_i2c_abort_transaction(bus, status);
     }
 
     status = soft_i2c_write_byte(bus, (uint8_t) (address_7bit << 1));
@@ -262,7 +290,10 @@ ml_status_t soft_i2c_write(ml_soft_i2c_bus_t *bus, uint8_t address_7bit,
             status = stop_status;
         }
     }
-    return status;
+    if (status != ML_STATUS_OK) {
+        return soft_i2c_abort_transaction(bus, status);
+    }
+    return ML_STATUS_OK;
 }
 
 ml_status_t soft_i2c_write_read(ml_soft_i2c_bus_t *bus,
@@ -286,7 +317,7 @@ ml_status_t soft_i2c_write_read(ml_soft_i2c_bus_t *bus,
         }
     }
     if (status != ML_STATUS_OK) {
-        return status;
+        return soft_i2c_abort_transaction(bus, status);
     }
     status = soft_i2c_write_byte(bus, (uint8_t) (address_7bit << 1));
     for (index = 0U;
@@ -314,7 +345,10 @@ ml_status_t soft_i2c_write_read(ml_soft_i2c_bus_t *bus,
             status = stop_status;
         }
     }
-    return status;
+    if (status != ML_STATUS_OK) {
+        return soft_i2c_abort_transaction(bus, status);
+    }
+    return ML_STATUS_OK;
 }
 
 ml_status_t I2C_Init(void)

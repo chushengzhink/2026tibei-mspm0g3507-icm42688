@@ -140,6 +140,20 @@ $cases = @(
         )
     },
     [pscustomobject]@{
+        Name = 'h5_mission_test'
+        Sources = @(
+            'tests/h5_mission_test.c',
+            'code/h5_mission.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'h5_telemetry_test'
+        Sources = @(
+            'tests/h5_telemetry_test.c',
+            'code/h5_telemetry.c'
+        )
+    },
+    [pscustomobject]@{
         Name = 'h456_app_test'
         Arguments = @(
             '-iquote', 'tests/h456_app_stubs',
@@ -151,6 +165,46 @@ $cases = @(
             'code/h456_mission.c',
             'code/h456_telemetry.c',
             'code/chassis_key.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'q3_ball_app_test'
+        Arguments = @(
+            '-iquote', 'tests/q3_app_stubs',
+            '-include', 'tests/q3_app_stubs/prelude.h'
+        )
+        Sources = @(
+            'tests/q3_ball_app_test.c',
+            'code/q3_ball_app.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'q3_profile_test'
+        Sources = @(
+            'tests/q3_profile_test.c',
+            'code/q3_ball_profile.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'q3_ball_test'
+        Arguments = @('-iquote', 'tests/q3_stubs')
+        Sources = @(
+            'tests/q3_ball_test.c',
+            'code/q3_ball.c',
+            'code/q3_ball_profile.c',
+            'code/rds3230.c',
+            'code/maix_ball_protocol.c'
+        )
+    },
+    [pscustomobject]@{
+        Name = 'q3_telemetry_test'
+        Arguments = @(
+            '-iquote', 'tests/q3_app_stubs',
+            '-include', 'tests/q3_app_stubs/prelude.h'
+        )
+        Sources = @(
+            'tests/q3_telemetry_test.c',
+            'code/q3_ball_telemetry.c'
         )
     },
     [pscustomobject]@{
@@ -305,9 +359,37 @@ try {
         $results.Add([pscustomobject]@{ Name = $case.Name; Passed = $true })
     }
 
+    Write-Host ("[{0}/{1}] q3_profile_tool_test" -f
+        ($cases.Count + 1), ($cases.Count + 1))
+    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -eq $pythonCommand) {
+        Write-Host '  FAIL (python not found)' -ForegroundColor Red
+        $results.Add([pscustomobject]@{
+            Name = 'q3_profile_tool_test'; Passed = $false
+        })
+    }
+    else {
+        $pythonOutput = & $pythonCommand.Source tests/q3_profile_tool_test.py 2>&1
+        $pythonExitCode = $LASTEXITCODE
+        if ($pythonOutput) {
+            $pythonOutput | ForEach-Object { Write-Host ("  {0}" -f $_) }
+        }
+        $results.Add([pscustomobject]@{
+            Name = 'q3_profile_tool_test';
+            Passed = ($pythonExitCode -eq 0)
+        })
+        if ($pythonExitCode -eq 0) {
+            Write-Host '  PASS' -ForegroundColor Green
+        }
+        else {
+            Write-Host '  FAIL' -ForegroundColor Red
+        }
+    }
+
+    $expectedCount = $cases.Count + 1
     $passed = @($results | Where-Object { $_.Passed }).Count
-    $failed = $cases.Count - $passed
-    Write-Host ("Summary: {0}/{1} passed" -f $passed, $cases.Count)
+    $failed = $expectedCount - $passed
+    Write-Host ("Summary: {0}/{1} passed" -f $passed, $expectedCount)
     if ($failed -ne 0) {
         exit 1
     }

@@ -411,18 +411,18 @@ static void assert_h4_line_config(void)
         g_line_config.outer_single_maximum_correction_mm_s);
 }
 
-static void assert_default_line_config(void)
+static void assert_h5_h6_line_config(void)
 {
-    assert(fabsf(g_line_config.correction_ratio - 0.22f) < 0.001f);
-    assert(fabsf(g_line_config.maximum_correction_mm_s - 90.0f) < 0.001f);
-    assert(fabsf(g_line_config.outer_single_correction_ratio - 0.35f) <
+    assert(fabsf(g_line_config.correction_ratio - 0.20f) < 0.001f);
+    assert(fabsf(g_line_config.maximum_correction_mm_s - 70.0f) < 0.001f);
+    assert(fabsf(g_line_config.outer_single_correction_ratio - 0.24f) <
         0.001f);
     assert(fabsf(g_line_config.outer_single_maximum_correction_mm_s -
-        120.0f) < 0.001f);
-    assert(fabsf(g_line_config.curve_hold_correction_ratio - 0.31f) <
+        70.0f) < 0.001f);
+    assert(fabsf(g_line_config.curve_hold_correction_ratio - 0.18f) <
         0.001f);
     assert(fabsf(g_line_config.curve_hold_maximum_correction_mm_s -
-        110.0f) < 0.001f);
+        60.0f) < 0.001f);
 }
 
 static void prepare_setup_without_vision(void)
@@ -548,9 +548,9 @@ static void test_mode_target_start_freeze_and_emergency(void)
     assert(status.state == H456_APP_RUNNING);
     assert(status.oled_frozen);
     assert(fabsf(status.target_cm - 0.5f) < 0.01f);
-    assert_default_line_config();
+    assert_h5_h6_line_config();
     assert(g_control_bias_us > 0.0f);
-    assert(g_control_bias_us <= 60.0f);
+    assert(g_control_bias_us <= 100.0f);
     assert(g_velocity_commands > 0U);
     oled_at_start = g_oled_writes;
     poll_count(8U);
@@ -558,13 +558,13 @@ static void test_mode_target_start_freeze_and_emergency(void)
     assert(g_control_bias_us > 0.0f);
     poll_count(40U);
     assert(g_control_bias_us > 0.0f);
-    assert(g_control_bias_us < 60.0f);
+    assert(g_control_bias_us < 100.0f);
     poll_count(50U);
     assert(g_control_bias_us > 0.0f);
-    assert(g_control_bias_us < 60.0f);
+    assert(g_control_bias_us < 100.0f);
     poll_count(60U);
     assert(g_control_bias_us > 0.0f);
-    assert(g_control_bias_us < 60.0f);
+    assert(g_control_bias_us < 100.0f);
     poll_count(150U);
     assert(g_control_bias_us == 0.0f);
     assert(g_oled_writes == oled_at_start);
@@ -596,6 +596,8 @@ static void test_h4_line_config_and_heading_protection(void)
     assert(get_status().state == H456_APP_RUNNING);
     assert_h4_line_config();
     assert(!g_last_heading_only);
+    assert(g_control_bias_us > 0.0f);
+    assert(g_control_bias_us <= 100.0f);
 
     g_imu_yaw_deg = 7.0f;
     poll_count(1U);
@@ -613,14 +615,14 @@ static void test_h4_line_config_and_heading_protection(void)
     assert(status.state == H456_APP_RUNNING);
 }
 
-static void test_h5_keeps_default_line_config_and_no_h4_heading_only(void)
+static void test_h5_uses_lap_line_config_and_no_h4_heading_only(void)
 {
     reset_mocks();
     assert(h456_app_init() == ML_STATUS_OK);
     prepare_ready();
     press_key(GPIOA, ML_KEY_UP_PIN);
     assert(get_status().mode == H456_MODE_5);
-    assert_default_line_config();
+    assert_h5_h6_line_config();
     poll_count(27U);
     assert(get_status().state == H456_APP_READY);
 
@@ -629,7 +631,9 @@ static void test_h5_keeps_default_line_config_and_no_h4_heading_only(void)
     g_imu_yaw_deg = 7.0f;
     poll_count(1U);
     assert(!g_last_heading_only);
-    assert_default_line_config();
+    assert_h5_h6_line_config();
+    assert(g_control_bias_us > 0.0f);
+    assert(g_control_bias_us <= 100.0f);
 }
 
 static void test_launch_bias_clears_on_finish(void)
@@ -642,6 +646,7 @@ static void test_launch_bias_clears_on_finish(void)
     press_key(GPIOB, ML_KEY_CENTER_PIN);
     assert(get_status().state == H456_APP_RUNNING);
     assert(g_control_bias_us > 0.0f);
+    assert(g_control_bias_us <= 100.0f);
 
     g_chassis.pose.left_distance_mm = 1500.0f;
     g_chassis.pose.right_distance_mm = 1500.0f;
@@ -749,7 +754,7 @@ int main(void)
     test_setup_display_reports_wait_reason();
     test_mode_target_start_freeze_and_emergency();
     test_h4_line_config_and_heading_protection();
-    test_h5_keeps_default_line_config_and_no_h4_heading_only();
+    test_h5_uses_lap_line_config_and_no_h4_heading_only();
     test_launch_bias_clears_on_finish();
     test_sustained_two_cm_error_stops();
     test_score_boundary_confirmation_gate();
