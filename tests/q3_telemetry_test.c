@@ -15,13 +15,16 @@ UART_Regs g_test_uart0;
 
 static char g_uart_capture[UART_CAPTURE_SIZE];
 static uint32_t g_uart_bytes;
+static uint32_t g_uart_init_calls;
+static ml_status_t g_uart_init_status = ML_STATUS_OK;
 
 ml_status_t uart_init(UART_Regs *uart, uint32_t baud, uint32_t priority)
 {
+    ++g_uart_init_calls;
     assert(uart == UART0);
     assert(baud == Q3_TELEMETRY_UART_BAUD);
     assert(priority == Q3_TELEMETRY_UART_PRIORITY);
-    return ML_STATUS_OK;
+    return g_uart_init_status;
 }
 
 ml_status_t uart_sendbyte(UART_Regs *uart, uint8_t byte)
@@ -37,6 +40,12 @@ static void reset_uart(void)
 {
     memset(g_uart_capture, 0, sizeof(g_uart_capture));
     g_uart_bytes = 0U;
+}
+
+static void reset_init_state(void)
+{
+    g_uart_init_calls = 0U;
+    g_uart_init_status = ML_STATUS_OK;
 }
 
 static q3_ball_status_t make_status(uint32_t time_ms)
@@ -77,7 +86,9 @@ static void test_csv_and_capacity(void)
     q3_ball_status_t status = make_status(100U);
     uint16_t index;
 
-    assert(q3_telemetry_init() == ML_STATUS_OK);
+    reset_init_state();
+    q3_telemetry_storage_init();
+    assert(g_uart_init_calls == 0U);
     reset_uart();
     assert(q3_telemetry_uart0_handle_byte('D', true, 0U) ==
         ML_STATUS_BUFFER_EMPTY);
@@ -106,9 +117,30 @@ static void test_csv_and_capacity(void)
     assert(q3_telemetry_count() == 0U);
 }
 
+static void test_uart0_init_is_separate_from_storage(void)
+{
+    q3_ball_status_t status = make_status(10U);
+
+    reset_init_state();
+    g_uart_init_status = ML_STATUS_TIMEOUT;
+    q3_telemetry_storage_init();
+    assert(q3_telemetry_uart0_init() == ML_STATUS_TIMEOUT);
+    assert(g_uart_init_calls == 1U);
+
+    q3_telemetry_session_start();
+    assert(q3_telemetry_record(&status) == ML_STATUS_OK);
+    assert(q3_telemetry_count() == 1U);
+
+    reset_init_state();
+    assert(q3_telemetry_init() == ML_STATUS_OK);
+    assert(g_uart_init_calls == 1U);
+    assert(q3_telemetry_count() == 0U);
+}
+
 int main(void)
 {
     test_csv_and_capacity();
+    test_uart0_init_is_separate_from_storage();
     printf("q3 telemetry tests passed\n");
     return 0;
 }

@@ -13,6 +13,7 @@ typedef struct {
     float curve_hold_maximum_correction_mm_s;
     float curve_hold_correction_ratio;
     uint16_t control_period_ms;
+    uint16_t curve_exit_fade_ms;
 } chassis_track_line_control_config_t;
 
 typedef struct { bool initialized; }
@@ -29,6 +30,8 @@ typedef struct {
 typedef struct {
     float linear_mm_s;
     float angular_rad_s;
+    float left_mm_s;
+    float right_mm_s;
     float correction_mm_s;
     float final_steering_bias_mm_s;
     bool line_valid;

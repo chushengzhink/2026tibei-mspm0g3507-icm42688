@@ -108,20 +108,37 @@ dis = display.Display()
 pinmap.set_pin_function("A28", "UART2_TX")
 pinmap.set_pin_function("A29", "UART2_RX")
 serial_dev = uart.UART("/dev/ttyS2", 115200)
+tx_count = 0
+last_loop_ms = time.monotonic_ns() // 1_000_000
 
 while not app.need_exit():
+    now_ms = time.monotonic_ns() // 1_000_000
+    loop_dt_ms = now_ms - last_loop_ms
+    last_loop_ms = now_ms
     img = cam.read()
     objects = detector.detect(img, DETECT_CONF_THRESHOLD,
                                DETECT_IOU_THRESHOLD)
     ball = select_ball(objects)
     serial_dev.write(encode_report(ball))
+    tx_count += 1
+    slow_text = " SLOW TX" if loop_dt_ms > 250 else ""
 
     if ball is None:
         img.draw_string(0, 0, "Q3 BALL LOST", color=image.COLOR_RED)
+        img.draw_string(0, 18, "TX Q3 ttyS2 115200",
+                        color=image.COLOR_RED)
+        img.draw_string(0, 36, "TX %lu DT %lums%s" %
+                        (tx_count, loop_dt_ms, slow_text),
+                        color=image.COLOR_RED)
     else:
         obj = ball["obj"]
         img.draw_rect(obj.x, obj.y, obj.w, obj.h, color=image.COLOR_GREEN)
         img.draw_string(0, 0, "Q3 X %.2fcm S %.2f" %
                         (ball["position_cm"], obj.score),
+                        color=image.COLOR_GREEN)
+        img.draw_string(0, 18, "TX Q3 ttyS2 115200 VALID",
+                        color=image.COLOR_GREEN)
+        img.draw_string(0, 36, "TX %lu DT %lums%s" %
+                        (tx_count, loop_dt_ms, slow_text),
                         color=image.COLOR_GREEN)
     dis.show(img)

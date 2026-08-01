@@ -274,7 +274,7 @@ static ml_status_t q3_export_csv(void)
     return ML_STATUS_OK;
 }
 
-ml_status_t q3_telemetry_init(void)
+void q3_telemetry_storage_init(void)
 {
     memset(g_records, 0, sizeof(g_records));
     g_record_count = 0U;
@@ -282,8 +282,18 @@ ml_status_t q3_telemetry_init(void)
     g_export_active = false;
     g_busy_sent = false;
     g_last_busy_ms = 0U;
+}
+
+ml_status_t q3_telemetry_uart0_init(void)
+{
     return uart_init(Q3_TELEMETRY_UART, Q3_TELEMETRY_UART_BAUD,
         Q3_TELEMETRY_UART_PRIORITY);
+}
+
+ml_status_t q3_telemetry_init(void)
+{
+    q3_telemetry_storage_init();
+    return q3_telemetry_uart0_init();
 }
 
 void q3_telemetry_session_start(void)

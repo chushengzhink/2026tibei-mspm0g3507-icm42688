@@ -38,6 +38,7 @@
 #define H5_APP_OUTER_CORRECTION_MAX_MM_S H5_LINE_OUTER_CORRECTION_MAX_MM_S
 #define H5_APP_CURVE_HOLD_CORRECTION_RATIO H5_LINE_CURVE_HOLD_RATIO
 #define H5_APP_CURVE_HOLD_CORRECTION_MAX_MM_S H5_LINE_CURVE_HOLD_MAX_MM_S
+#define H5_APP_CURVE_EXIT_FADE_MS      H5_LINE_CURVE_EXIT_FADE_MS
 #define H5_APP_HEADING_ONLY_ENTER_DEG  (6.0f)
 #define H5_APP_HEADING_ONLY_EXIT_DEG   (3.0f)
 
@@ -331,6 +332,7 @@ static ml_status_t h5_configure_line_control(h5_mode_t mode)
         H5_APP_CURVE_HOLD_CORRECTION_RATIO;
     line_config.curve_hold_maximum_correction_mm_s =
         H5_APP_CURVE_HOLD_CORRECTION_MAX_MM_S;
+    line_config.curve_exit_fade_ms = H5_APP_CURVE_EXIT_FADE_MS;
     return chassis_track_line_control_init(
         &g_app.line_control, &line_config);
 }

@@ -24,6 +24,9 @@ typedef struct {
     q3_state_t state;
     q3_mode_t mode;
     q3_rescue_stage_t rescue_stage;
+    q3_core_init_stage_t init_stage;
+    q3_state_t cal_fault_state;
+    q3_cal_fault_reason_t cal_fault_reason;
     bool initialized;
     bool vision_ready;
     bool profile_valid;
@@ -33,6 +36,7 @@ typedef struct {
     bool sequence_completed;
     bool plus_captured;
     bool final_captured;
+    bool final_capture_latched;
     bool brake_active;
     bool boot_axis_retry_used;
     uint8_t consecutive_valid_frames;
@@ -49,6 +53,7 @@ typedef struct {
     uint32_t last_valid_receive_ms;
     uint32_t last_capture_ms;
     uint32_t vision_frame_interval_ms;
+    uint32_t vision_last_diag_interval_ms;
     uint32_t confirm_start_ms;
     uint32_t stall_anchor_ms;
     uint32_t rescue_start_ms;
@@ -69,6 +74,7 @@ typedef struct {
     int16_t raw_center_y_px;
     float raw_score;
     uint32_t observer_outliers;
+    q3_vision_diag_t vision_diag;
 } q3_ball_context_t;
 
 static q3_ball_context_t g_q3;
@@ -150,6 +156,15 @@ static void q3_reset_rescue(void)
     g_q3.stall_anchor_position_cm = g_q3.position_cm;
     g_q3.stall_progress_cm = 0.0f;
     g_q3.rescue_anchor_position_cm = g_q3.position_cm;
+}
+
+static void q3_set_init_stage(q3_core_init_stage_t stage,
+    q3_core_init_progress_t progress, void *context)
+{
+    g_q3.init_stage = stage;
+    if (progress != 0) {
+        progress(stage, context);
+    }
 }
 
 static void q3_change_state(q3_state_t state)
@@ -267,6 +282,31 @@ static void q3_note_invalid_measurement(void)
     g_q3.consecutive_valid_frames = 0U;
 }
 
+static bool q3_waiting_for_vision(void)
+{
+    return g_q3.state == Q3_STATE_WAIT_VISION;
+}
+
+static void q3_update_vision_diag(void)
+{
+    if (g_q3.parser.frames_ok == 0U) {
+        g_q3.vision_diag = Q3_VISION_DIAG_NO_RX;
+    } else if (g_q3.raw_score <= 0.0f) {
+        g_q3.vision_diag = Q3_VISION_DIAG_LOST;
+    } else if (g_q3.raw_score < Q3_VISION_MINIMUM_SCORE) {
+        g_q3.vision_diag = Q3_VISION_DIAG_LOW_SCORE;
+    } else if (g_q3.vision_frame_interval_ms > Q3_MAX_CAPTURE_INTERVAL_MS) {
+        g_q3.vision_diag = Q3_VISION_DIAG_SLOW_FRAME;
+    } else if (!g_q3.vision_ready) {
+        g_q3.vision_diag = Q3_VISION_DIAG_WAIT_STREAK;
+    } else if ((g_q3.position_cm > (Q3_READY_ERROR_CM + 0.30f)) ||
+               (g_q3.position_cm < -(Q3_READY_ERROR_CM + 0.30f))) {
+        g_q3.vision_diag = Q3_VISION_DIAG_MOVE_TO_O;
+    } else {
+        g_q3.vision_diag = Q3_VISION_DIAG_OK;
+    }
+}
+
 static void q3_handle_measurement(
     const maix_ball_measurement_t *measurement)
 {
@@ -287,6 +327,7 @@ static void q3_handle_measurement(
         (measurement->position_cm < Q3_MEASUREMENT_MINIMUM_CM) ||
         (measurement->position_cm > Q3_MEASUREMENT_MAXIMUM_CM)) {
         q3_note_invalid_measurement();
+        q3_update_vision_diag();
         return;
     }
 
@@ -298,20 +339,32 @@ static void q3_handle_measurement(
         g_q3.position_cm = measurement->position_cm;
         g_q3.velocity_cm_per_s = 0.0f;
         g_q3.consecutive_valid_frames = 1U;
+        q3_update_vision_diag();
         return;
     }
 
     capture_interval_ms = measurement->capture_ms - g_q3.last_capture_ms;
     if (capture_interval_ms == 0U) {
         g_q3.new_measurement = false;
+        q3_update_vision_diag();
         return;
     }
     g_q3.vision_frame_interval_ms = capture_interval_ms;
+    g_q3.vision_last_diag_interval_ms = capture_interval_ms;
     g_q3.last_capture_ms = measurement->capture_ms;
     if (capture_interval_ms > Q3_MAX_CAPTURE_INTERVAL_MS) {
         g_q3.position_cm = measurement->position_cm;
         g_q3.velocity_cm_per_s = 0.0f;
-        g_q3.consecutive_valid_frames = 1U;
+        if (q3_waiting_for_vision() &&
+            (g_q3.consecutive_valid_frames < Q3_VISION_REACQUIRE_FRAMES)) {
+            ++g_q3.consecutive_valid_frames;
+        } else if (!q3_waiting_for_vision()) {
+            g_q3.consecutive_valid_frames = 1U;
+        }
+        if (g_q3.consecutive_valid_frames >= Q3_VISION_REACQUIRE_FRAMES) {
+            g_q3.vision_ready = true;
+        }
+        q3_update_vision_diag();
         return;
     }
     dt_s = (float) capture_interval_ms / 1000.0f;
@@ -321,6 +374,7 @@ static void q3_handle_measurement(
         ++g_q3.observer_outliers;
         g_q3.new_measurement = false;
         q3_note_invalid_measurement();
+        q3_update_vision_diag();
         return;
     }
     g_q3.position_cm = predicted + Q3_OBSERVER_ALPHA * residual;
@@ -331,12 +385,20 @@ static void q3_handle_measurement(
     if (g_q3.consecutive_valid_frames >= Q3_VISION_REACQUIRE_FRAMES) {
         g_q3.vision_ready = true;
     }
+    q3_update_vision_diag();
 }
 
 static void q3_fail(q3_state_t state)
 {
     q3_set_safe();
     q3_change_state(state);
+}
+
+static void q3_fail_calibration(q3_cal_fault_reason_t reason)
+{
+    g_q3.cal_fault_state = g_q3.state;
+    g_q3.cal_fault_reason = reason;
+    q3_fail(Q3_STATE_CALIBRATION_FAULT);
 }
 
 static float q3_profile_drive_command(float target_cm,
@@ -383,6 +445,27 @@ static float q3_drive_command(float target_cm,
         q3_profile_drive_command(target_cm, sample);
 }
 
+static bool q3_plus_urgent_active(void)
+{
+    return (g_q3.state == Q3_STATE_PLUS_DRIVE) &&
+        ((g_q3.position_cm >= Q3_PLUS_URGENT_RESCUE_POSITION_CM) ||
+         (q3_sequence_elapsed() >= Q3_PLUS_URGENT_RESCUE_ELAPSED_MS));
+}
+
+static float q3_plus_drive_command_floor(float command,
+    const q3_profile_sample_t *sample)
+{
+    float minimum;
+
+    if (!q3_plus_urgent_active()) {
+        return command;
+    }
+    minimum = q3_clamp(sample->balance_command_us +
+        Q3_PLUS_DRIVE_MIN_COMMAND_US, -Q3_NORMAL_COMMAND_LIMIT_US,
+        Q3_NORMAL_COMMAND_LIMIT_US);
+    return (command < minimum) ? minimum : command;
+}
+
 static float q3_brake_command(int8_t travel_direction,
     const q3_profile_sample_t *sample)
 {
@@ -394,6 +477,16 @@ static float q3_brake_command(int8_t travel_direction,
     return q3_clamp(sample->balance_command_us +
         (float) brake_direction * magnitude,
         -Q3_NORMAL_COMMAND_LIMIT_US, Q3_NORMAL_COMMAND_LIMIT_US);
+}
+
+static float q3_velocity_brake_command(const q3_profile_sample_t *sample)
+{
+    int8_t travel_direction = q3_sign(g_q3.velocity_cm_per_s);
+
+    if (travel_direction == 0) {
+        return sample->balance_command_us;
+    }
+    return q3_brake_command(travel_direction, sample);
 }
 
 static float q3_capture_command(float target_cm,
@@ -414,13 +507,61 @@ static float q3_capture_command(float target_cm,
         Q3_CAPTURE_COMMAND_LIMIT_US);
 }
 
+static float q3_final_capture_command(float target_cm,
+    const q3_profile_sample_t *sample)
+{
+    float error = target_cm - g_q3.position_cm;
+    float command = sample->balance_command_us +
+        Q3_FINAL_POSITION_GAIN_US_PER_CM * error -
+        Q3_FINAL_SPEED_GAIN_US_PER_CM_S * g_q3.velocity_cm_per_s;
+
+    if ((g_q3.position_cm > (Q3_MINUS_VALID_MAXIMUM_CM -
+            Q3_FINAL_EDGE_MARGIN_CM)) &&
+        (g_q3.velocity_cm_per_s > 0.0f)) {
+        command -= Q3_FINAL_EDGE_BIAS_US;
+    }
+    if ((g_q3.position_cm < (Q3_MINUS_VALID_MINIMUM_CM +
+            Q3_FINAL_EDGE_MARGIN_CM)) &&
+        (g_q3.velocity_cm_per_s < 0.0f)) {
+        command += Q3_FINAL_EDGE_BIAS_US;
+    }
+    return q3_clamp(command, -Q3_FINAL_FUNNEL_COMMAND_LIMIT_US,
+        Q3_FINAL_FUNNEL_COMMAND_LIMIT_US);
+}
+
+static bool q3_final_funnel_should_latch(void)
+{
+    if (!g_q3.plus_captured ||
+        ((g_q3.state != Q3_STATE_MINUS_DRIVE) &&
+         (g_q3.state != Q3_STATE_MINUS_BRAKE) &&
+         (g_q3.state != Q3_STATE_FINAL_CAPTURE))) {
+        return false;
+    }
+    return (g_q3.position_cm <= Q3_MINUS_VALID_MAXIMUM_CM) ||
+        (g_q3.predicted_stop_cm <= Q3_MINUS_CONTROL_TARGET_CM);
+}
+
+static bool q3_final_funnel_braking(void)
+{
+    return q3_abs(g_q3.velocity_cm_per_s) >
+        Q3_FINAL_REBRAKE_SPEED_CM_S;
+}
+
+static float q3_final_funnel_command(const q3_profile_sample_t *sample)
+{
+    if (q3_final_funnel_braking()) {
+        return q3_velocity_brake_command(sample);
+    }
+    return q3_final_capture_command(Q3_FINAL_HOLD_TARGET_CM, sample);
+}
+
 static bool q3_update_rescue(float target_cm,
     const q3_profile_sample_t *sample, bool rescue_allowed,
+    bool urgent_boundary_hold,
     float *command)
 {
     int8_t direction = q3_sign(target_cm - g_q3.position_cm);
     float progress;
-    float speed_along;
     uint32_t elapsed;
 
     if ((command == 0) || !rescue_allowed || (direction == 0)) {
@@ -435,11 +576,9 @@ static bool q3_update_rescue(float target_cm,
     }
     progress = (float) direction *
         (g_q3.position_cm - g_q3.stall_anchor_position_cm);
-    speed_along = (float) direction * g_q3.velocity_cm_per_s;
     g_q3.stall_progress_cm = progress;
 
-    if ((progress >= Q3_STALL_PROGRESS_CM) ||
-        (speed_along > Q3_STALL_SPEED_CM_S)) {
+    if (progress >= Q3_STALL_PROGRESS_CM) {
         q3_reset_rescue();
         g_q3.rescue_direction = direction;
         return false;
@@ -449,7 +588,13 @@ static bool q3_update_rescue(float target_cm,
             return false;
         }
         ++g_q3.rescue_attempts;
-        g_q3.rescue_stage = Q3_RESCUE_KICK;
+        g_q3.rescue_stage = urgent_boundary_hold ?
+            Q3_RESCUE_HOLD : Q3_RESCUE_KICK;
+        g_q3.rescue_start_ms = g_q3.now_ms;
+        g_q3.rescue_anchor_position_cm = g_q3.position_cm;
+    } else if (urgent_boundary_hold &&
+               (g_q3.rescue_stage != Q3_RESCUE_HOLD)) {
+        g_q3.rescue_stage = Q3_RESCUE_HOLD;
         g_q3.rescue_start_ms = g_q3.now_ms;
         g_q3.rescue_anchor_position_cm = g_q3.position_cm;
     }
@@ -524,9 +669,14 @@ static void q3_process_boot(const q3_profile_sample_t *sample)
     float mean_response;
     float trim;
 
-    if ((g_q3.now_ms - g_q3.boot_start_ms) >= Q3_BOOT_TIMEOUT_MS ||
-        (q3_abs(g_q3.position_cm) > Q3_BOOT_POSITION_LIMIT_CM)) {
-        q3_fail(Q3_STATE_CALIBRATION_FAULT);
+    if (q3_abs(g_q3.position_cm) > Q3_BOOT_POSITION_LIMIT_CM) {
+        q3_fail_calibration(Q3_CAL_FAULT_POSITION_LIMIT);
+        return;
+    }
+    if ((g_q3.now_ms - g_q3.boot_start_ms) >= Q3_BOOT_TIMEOUT_MS) {
+        q3_fail_calibration((g_q3.state == Q3_STATE_BOOT_RECENTER) ?
+            Q3_CAL_FAULT_RECENTER_TIMEOUT :
+            Q3_CAL_FAULT_BOOT_TIMEOUT);
         return;
     }
     switch (g_q3.state) {
@@ -553,7 +703,7 @@ static void q3_process_boot(const q3_profile_sample_t *sample)
                     return;
                 }
                 if (displacement < -Q3_BOOT_DIRECTION_MINIMUM_CM) {
-                    q3_fail(Q3_STATE_CALIBRATION_FAULT);
+                    q3_fail_calibration(Q3_CAL_FAULT_PLUS_DIRECTION);
                     return;
                 }
                 g_q3.boot_plus_displacement_cm = displacement;
@@ -575,7 +725,7 @@ static void q3_process_boot(const q3_profile_sample_t *sample)
             if (q3_state_elapsed() >= Q3_BOOT_PROBE_MS) {
                 displacement = g_q3.position_cm - g_q3.boot_probe_start_cm;
                 if (displacement > Q3_BOOT_DIRECTION_MINIMUM_CM) {
-                    q3_fail(Q3_STATE_CALIBRATION_FAULT);
+                    q3_fail_calibration(Q3_CAL_FAULT_MINUS_DIRECTION);
                     return;
                 }
                 mean_response = (q3_abs(g_q3.boot_plus_displacement_cm) +
@@ -635,6 +785,9 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
         return;
     }
     g_q3.predicted_stop_cm = q3_predict_stop(sample);
+    if (q3_final_funnel_should_latch()) {
+        g_q3.final_capture_latched = true;
+    }
     switch (g_q3.state) {
         case Q3_STATE_PLUS_DRIVE:
             g_q3.target_cm = Q3_PLUS_BRAKE_TARGET_CM;
@@ -653,7 +806,8 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
                 command = q3_brake_command(1, sample);
                 break;
             }
-            command = q3_drive_command(g_q3.target_cm, sample);
+            command = q3_plus_drive_command_floor(
+                q3_drive_command(g_q3.target_cm, sample), sample);
             rescue_allowed = true;
             break;
         case Q3_STATE_PLUS_BRAKE:
@@ -666,8 +820,9 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
             } else if ((g_q3.predicted_stop_cm < 4.35f) &&
                        (g_q3.velocity_cm_per_s <= 0.20f)) {
                 q3_change_state(Q3_STATE_PLUS_DRIVE);
-                command = q3_drive_command(
-                    Q3_PLUS_BRAKE_TARGET_CM, sample);
+                command = q3_plus_drive_command_floor(
+                    q3_drive_command(Q3_PLUS_BRAKE_TARGET_CM, sample),
+                    sample);
                 rescue_allowed = true;
                 break;
             }
@@ -683,10 +838,28 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
             }
             break;
         case Q3_STATE_MINUS_DRIVE:
-            g_q3.target_cm = Q3_MINUS_CONTROL_TARGET_CM;
-            if (in_final_band) {
+            g_q3.target_cm = g_q3.final_capture_latched ?
+                Q3_FINAL_HOLD_TARGET_CM : Q3_MINUS_CONTROL_TARGET_CM;
+            if (g_q3.final_capture_latched) {
                 q3_change_state(Q3_STATE_FINAL_CAPTURE);
-                command = q3_capture_command(g_q3.target_cm, sample);
+                g_q3.target_cm = Q3_FINAL_HOLD_TARGET_CM;
+                g_q3.brake_active = q3_final_funnel_braking();
+                command = q3_final_funnel_command(sample);
+                break;
+            }
+            if (in_final_band) {
+                if (q3_abs(g_q3.velocity_cm_per_s) <=
+                    Q3_FINAL_CAPTURE_ENTRY_SPEED_CM_S) {
+                    g_q3.final_capture_latched = true;
+                    q3_change_state(Q3_STATE_FINAL_CAPTURE);
+                    g_q3.target_cm = Q3_FINAL_HOLD_TARGET_CM;
+                    command = q3_final_funnel_command(sample);
+                } else {
+                    g_q3.final_capture_latched = true;
+                    q3_change_state(Q3_STATE_MINUS_BRAKE);
+                    g_q3.brake_active = true;
+                    command = q3_velocity_brake_command(sample);
+                }
                 break;
             }
             if ((g_q3.predicted_stop_cm <=
@@ -700,11 +873,27 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
             rescue_allowed = true;
             break;
         case Q3_STATE_MINUS_BRAKE:
-            g_q3.target_cm = Q3_MINUS_CONTROL_TARGET_CM;
+            g_q3.target_cm = g_q3.final_capture_latched ?
+                Q3_FINAL_HOLD_TARGET_CM : Q3_MINUS_CONTROL_TARGET_CM;
             g_q3.brake_active = true;
-            if (in_final_band) {
+            if (g_q3.final_capture_latched) {
                 q3_change_state(Q3_STATE_FINAL_CAPTURE);
-                command = q3_capture_command(g_q3.target_cm, sample);
+                g_q3.target_cm = Q3_FINAL_HOLD_TARGET_CM;
+                g_q3.brake_active = q3_final_funnel_braking();
+                command = q3_final_funnel_command(sample);
+                break;
+            }
+            if (in_final_band) {
+                if (q3_abs(g_q3.velocity_cm_per_s) <=
+                    Q3_FINAL_CAPTURE_ENTRY_SPEED_CM_S) {
+                    g_q3.final_capture_latched = true;
+                    q3_change_state(Q3_STATE_FINAL_CAPTURE);
+                    g_q3.target_cm = Q3_FINAL_HOLD_TARGET_CM;
+                    command = q3_final_funnel_command(sample);
+                } else {
+                    g_q3.final_capture_latched = true;
+                    command = q3_velocity_brake_command(sample);
+                }
                 break;
             }
             if ((g_q3.predicted_stop_cm > -4.35f) &&
@@ -717,9 +906,10 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
             command = q3_brake_command(-1, sample);
             break;
         case Q3_STATE_FINAL_CAPTURE:
-            g_q3.target_cm = Q3_MINUS_CONTROL_TARGET_CM;
-            command = q3_capture_command(g_q3.target_cm, sample);
-            rescue_allowed = !in_final_band;
+            g_q3.final_capture_latched = true;
+            g_q3.target_cm = Q3_FINAL_HOLD_TARGET_CM;
+            g_q3.brake_active = q3_final_funnel_braking();
+            command = q3_final_funnel_command(sample);
             if (in_final_band &&
                 (q3_abs(g_q3.velocity_cm_per_s) <=
                  Q3_FINAL_CAPTURE_SPEED_CM_S)) {
@@ -736,14 +926,14 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
             }
             break;
         case Q3_STATE_COMPLETE:
-            g_q3.target_cm = Q3_MINUS_CONTROL_TARGET_CM;
-            command = q3_capture_command(g_q3.target_cm, sample);
+            g_q3.target_cm = Q3_FINAL_HOLD_TARGET_CM;
+            command = q3_final_capture_command(g_q3.target_cm, sample);
             break;
         default:
             return;
     }
     if (!q3_update_rescue(g_q3.target_cm, sample,
-            rescue_allowed, &command)) {
+            rescue_allowed, q3_plus_urgent_active(), &command)) {
         g_q3.stall_progress_cm =
             (float) q3_sign(g_q3.target_cm - g_q3.position_cm) *
             (g_q3.position_cm - g_q3.stall_anchor_position_cm);
@@ -891,7 +1081,7 @@ static void q3_process_map(const q3_profile_sample_t *sample)
         rescue_allowed = q3_abs(g_q3.position_cm) >
             Q3_MAP_CENTER_ERROR_CM;
         (void) q3_update_rescue(0.0f, sample,
-            rescue_allowed, &command);
+            rescue_allowed, false, &command);
         q3_calibration_observe(1, sample, command);
         q3_set_physical_command(command);
         if ((q3_abs(g_q3.position_cm) <= Q3_MAP_CENTER_ERROR_CM) &&
@@ -912,7 +1102,8 @@ static void q3_process_map(const q3_profile_sample_t *sample)
     direction = (g_q3.state == Q3_STATE_MAP_TO_PLUS) ? 1 : -1;
     g_q3.target_cm = (float) direction * Q3_MAP_LIMIT_CM;
     command = q3_map_drive_command(direction, sample);
-    (void) q3_update_rescue(g_q3.target_cm, sample, true, &command);
+    (void) q3_update_rescue(g_q3.target_cm, sample, true, false,
+        &command);
     q3_calibration_observe(direction, sample, command);
     q3_set_physical_command(command);
     if ((direction > 0) &&
@@ -955,6 +1146,9 @@ static void q3_process_control(void)
         g_q3.boot_start_ms = g_q3.now_ms;
         q3_change_state(Q3_STATE_BOOT_SETTLE);
     }
+    if (g_q3.state == Q3_STATE_WAIT_VISION) {
+        q3_update_vision_diag();
+    }
     if (q3_boot_motion_active()) {
         q3_process_boot(&sample);
     } else if (q3_formal_motion_active()) {
@@ -970,11 +1164,13 @@ static void q3_process_control(void)
     g_q3.new_measurement = false;
 }
 
-ml_status_t q3_ball_init(void)
+ml_status_t q3_ball_init_with_progress(q3_core_init_progress_t progress,
+    void *context)
 {
     ml_status_t status;
 
     memset(&g_q3, 0, sizeof(g_q3));
+    q3_set_init_stage(Q3_CORE_INIT_START, progress, context);
     maix_ball_parser_init(&g_q3.parser);
     g_q3.profile = q3_profile_get();
     g_q3.profile_valid = q3_profile_validate(g_q3.profile);
@@ -988,11 +1184,13 @@ ml_status_t q3_ball_init(void)
         Q3_STATE_WAIT_VISION : Q3_STATE_PROFILE_FAULT;
     q3_calibration_reset();
 
+    q3_set_init_stage(Q3_CORE_INIT_UART2, progress, context);
     status = uart_init(Q3_VISION_UART, Q3_VISION_UART_BAUD,
         Q3_VISION_UART_PRIORITY);
     if (status != ML_STATUS_OK) {
         return status;
     }
+    q3_set_init_stage(Q3_CORE_INIT_SERVO, progress, context);
     status = rds3230_init(&g_q3.servo, Q3_SERVO_TIMER,
         Q3_SERVO_CHANNEL, Q3_SERVO_FREQUENCY_HZ,
         Q3_SERVO_MINIMUM_US, Q3_SERVO_SAFE_US,
@@ -1000,14 +1198,27 @@ ml_status_t q3_ball_init(void)
     if (status != ML_STATUS_OK) {
         return status;
     }
+    q3_set_init_stage(Q3_CORE_INIT_TIMG6, progress, context);
     status = tim_interrupt_ms_init_ex(Q3_TIMEBASE_TIMER, 1U,
         Q3_TIMEBASE_PRIORITY, q3_tick_1ms, 0);
     if (status != ML_STATUS_OK) {
         return status;
     }
     g_q3.initialized = true;
+    q3_set_init_stage(Q3_CORE_INIT_SAFE, progress, context);
     q3_set_safe();
+    q3_set_init_stage(Q3_CORE_INIT_COMPLETE, progress, context);
     return ML_STATUS_OK;
+}
+
+ml_status_t q3_ball_init(void)
+{
+    return q3_ball_init_with_progress(0, 0);
+}
+
+q3_core_init_stage_t q3_ball_get_init_stage(void)
+{
+    return g_q3.init_stage;
 }
 
 void q3_ball_process(void)
@@ -1054,6 +1265,7 @@ ml_status_t q3_ball_start(void)
     g_q3.sequence_completed = false;
     g_q3.plus_captured = false;
     g_q3.final_captured = false;
+    g_q3.final_capture_latched = false;
     g_q3.sequence_start_ms = g_q3.now_ms;
     g_q3.target_cm = Q3_PLUS_BRAKE_TARGET_CM;
     q3_change_state(Q3_STATE_PLUS_DRIVE);
@@ -1148,6 +1360,9 @@ ml_status_t q3_ball_get_status(q3_ball_status_t *status)
     status->state = g_q3.state;
     status->mode = g_q3.mode;
     status->rescue_stage = g_q3.rescue_stage;
+    status->cal_fault_state = g_q3.cal_fault_state;
+    status->cal_fault_reason = g_q3.cal_fault_reason;
+    status->vision_diag = g_q3.vision_diag;
     status->initialized = g_q3.initialized;
     status->vision_ready = g_q3.vision_ready;
     status->profile_valid = g_q3.profile_valid;
@@ -1155,6 +1370,7 @@ ml_status_t q3_ball_get_status(q3_ball_status_t *status)
     status->sequence_completed = g_q3.sequence_completed;
     status->plus_captured = g_q3.plus_captured;
     status->final_captured = g_q3.final_captured;
+    status->final_capture_latched = g_q3.final_capture_latched;
     status->brake_active = g_q3.brake_active;
     status->servo_settled =
         rds3230_get_current_us(&g_q3.servo) ==
@@ -1162,6 +1378,7 @@ ml_status_t q3_ball_get_status(q3_ball_status_t *status)
     status->axis_sign = g_q3.axis_sign;
     status->profile_index = g_q3.profile_index;
     status->rescue_attempts = g_q3.rescue_attempts;
+    status->vision_valid_streak = g_q3.consecutive_valid_frames;
     status->neutral_us = g_q3.neutral_us;
     status->response_scale = g_q3.response_scale;
     status->target_cm = g_q3.target_cm;
@@ -1182,6 +1399,8 @@ ml_status_t q3_ball_get_status(q3_ball_status_t *status)
     status->vision_age_ms = g_q3.capture_initialized ?
         (g_q3.now_ms - g_q3.last_valid_receive_ms) : 0xFFFFFFFFUL;
     status->vision_frame_interval_ms = g_q3.vision_frame_interval_ms;
+    status->vision_last_diag_interval_ms =
+        g_q3.vision_last_diag_interval_ms;
     status->stall_elapsed_ms = g_q3.now_ms - g_q3.stall_anchor_ms;
     status->valid_frames = g_q3.parser.frames_ok;
     status->crc_errors = g_q3.parser.crc_errors;

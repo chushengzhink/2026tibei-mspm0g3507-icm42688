@@ -220,8 +220,12 @@ ml_status_t uart_init(UART_Regs *uart, uint32_t baud, uint32_t priority)
     delay_cycles(16U);
     DL_GPIO_initPeripheralOutputFunction(
         state->tx_iomux, state->tx_function);
-    DL_GPIO_initPeripheralInputFunction(
-        state->rx_iomux, state->rx_function);
+    /* Bias RX high so an unplugged USB-UART cable does not leave the line
+     * floating into spurious idle noise interrupts. */
+    DL_GPIO_initPeripheralInputFunctionFeatures(
+        state->rx_iomux, state->rx_function,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+        DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
     DL_UART_Main_setClockConfig(uart, &clock_config);
     DL_UART_Main_init(uart, &uart_config);
     DL_UART_Main_setOversampling(uart, DL_UART_OVERSAMPLING_RATE_16X);

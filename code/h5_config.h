@@ -26,10 +26,11 @@
 
 #define H5_LINE_CORRECTION_RATIO             (0.20f)
 #define H5_LINE_CORRECTION_MAX_MM_S         (70.0f)
-#define H5_LINE_OUTER_CORRECTION_RATIO       (0.28f)
-#define H5_LINE_OUTER_CORRECTION_MAX_MM_S   (70.0f)
-#define H5_LINE_CURVE_HOLD_RATIO             (0.18f)
-#define H5_LINE_CURVE_HOLD_MAX_MM_S         (60.0f)
+#define H5_LINE_OUTER_CORRECTION_RATIO       (0.22f)
+#define H5_LINE_OUTER_CORRECTION_MAX_MM_S   (60.0f)
+#define H5_LINE_CURVE_HOLD_RATIO             (0.16f)
+#define H5_LINE_CURVE_HOLD_MAX_MM_S         (50.0f)
+#define H5_LINE_CURVE_EXIT_FADE_MS          (120U)
 
 #define H5_HEADING_GATE_TARGET_DEG           (360.0f)
 #define H5_HEADING_GATE_TOLERANCE_DEG       (5.0f)

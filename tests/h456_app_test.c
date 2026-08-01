@@ -18,7 +18,7 @@ const chassis_config_t g_chassis_race_config = {
 const chassis_track_line_control_config_t
     g_chassis_track_line_control_default_config = {
         214.2f, 500.0f, 90.0f, 0.22f, 120.0f, 0.35f,
-        110.0f, 0.31f, 20U
+        110.0f, 0.31f, 20U, 0U
     };
 
 static chassis_status_t g_chassis;
@@ -30,11 +30,15 @@ static uint32_t g_oled_writes;
 static uint32_t g_velocity_commands;
 static float g_control_bias_us;
 static float g_imu_yaw_deg;
+static float g_last_angular_rad_s;
+static float g_last_heading_feedback_rad_s;
+static float g_forced_line_bias_mm_s;
 static ml_status_t g_line_init_status;
 static ml_status_t g_icm_init_status;
 static bool g_imu_complete_sent;
 static bool g_chassis_emergency;
 static bool g_last_heading_only;
+static bool g_force_line_bias;
 static char g_oled_lines[OLED_TEXT_LINE_COUNT][OLED_TEXT_COLUMN_COUNT + 1U];
 
 static void reset_mocks(void)
@@ -47,11 +51,15 @@ static void reset_mocks(void)
     g_velocity_commands = 0U;
     g_control_bias_us = 0.0f;
     g_imu_yaw_deg = 0.0f;
+    g_last_angular_rad_s = 0.0f;
+    g_last_heading_feedback_rad_s = 0.0f;
+    g_forced_line_bias_mm_s = 0.0f;
     g_line_init_status = ML_STATUS_OK;
     g_icm_init_status = ML_STATUS_OK;
     g_imu_complete_sent = false;
     g_chassis_emergency = false;
     g_last_heading_only = false;
+    g_force_line_bias = false;
     memset(&g_line_config, 0, sizeof(g_line_config));
     memset(g_oled_lines, 0, sizeof(g_oled_lines));
 }
@@ -202,9 +210,12 @@ void chassis_reset_pose(float x_mm, float y_mm, float heading_deg)
 
 ml_status_t chassis_set_velocity(float linear_mm_s, float angular_rad_s)
 {
-    (void) angular_rad_s;
-    g_chassis.target_left_mm_s = linear_mm_s;
-    g_chassis.target_right_mm_s = linear_mm_s;
+    float steering_bias_mm_s = angular_rad_s *
+        g_chassis_race_config.effective_track_mm * 0.5f;
+
+    g_last_angular_rad_s = angular_rad_s;
+    g_chassis.target_left_mm_s = linear_mm_s - steering_bias_mm_s;
+    g_chassis.target_right_mm_s = linear_mm_s + steering_bias_mm_s;
     ++g_velocity_commands;
     return ML_STATUS_OK;
 }
@@ -262,10 +273,18 @@ ml_status_t chassis_track_line_control_update_fused(
     assert(!sample->io_fault);
     memset(output, 0, sizeof(*output));
     output->linear_mm_s = request->linear_mm_s;
-    output->angular_rad_s = request->route_feedforward_rad_s +
-        request->heading_feedback_rad_s;
+    output->final_steering_bias_mm_s =
+        g_force_line_bias ? g_forced_line_bias_mm_s : 0.0f;
+    output->left_mm_s =
+        request->linear_mm_s - output->final_steering_bias_mm_s;
+    output->right_mm_s =
+        request->linear_mm_s + output->final_steering_bias_mm_s;
+    output->angular_rad_s =
+        (output->right_mm_s - output->left_mm_s) /
+        g_chassis_race_config.effective_track_mm;
     output->line_valid = true;
     g_last_heading_only = request->heading_only;
+    g_last_heading_feedback_rad_s = request->heading_feedback_rad_s;
     return ML_STATUS_OK;
 }
 
@@ -372,12 +391,32 @@ static void press_key(GPIO_Regs *port, uint32_t pin)
     poll_count(1U);
 }
 
+static void hold_key(GPIO_Regs *port, uint32_t pin)
+{
+    uint32_t *pressed = port == GPIOA ? &g_pressed_a : &g_pressed_b;
+
+    *pressed |= pin;
+}
+
+static void release_key(GPIO_Regs *port, uint32_t pin)
+{
+    uint32_t *pressed = port == GPIOA ? &g_pressed_a : &g_pressed_b;
+
+    *pressed &= ~pin;
+}
+
 static h456_app_status_t get_status(void)
 {
     h456_app_status_t status;
 
     assert(h456_app_get_status(&status) == ML_STATUS_OK);
     return status;
+}
+
+static float commanded_steering_bias_mm_s(void)
+{
+    return g_last_angular_rad_s *
+        g_chassis_race_config.effective_track_mm * 0.5f;
 }
 
 static void prepare_ready(void)
@@ -395,6 +434,23 @@ static void prepare_ready(void)
     assert(status.state == H456_APP_READY);
 }
 
+static void select_h4_ready(void)
+{
+    press_key(GPIOA, ML_KEY_UP_PIN);
+    assert(get_status().mode == H456_MODE_4);
+    poll_count(27U);
+    assert(get_status().state == H456_APP_READY);
+}
+
+static void select_h5_ready(void)
+{
+    select_h4_ready();
+    press_key(GPIOA, ML_KEY_UP_PIN);
+    assert(get_status().mode == H456_MODE_5);
+    poll_count(27U);
+    assert(get_status().state == H456_APP_READY);
+}
+
 static void assert_h4_line_config(void)
 {
     assert(fabsf(g_line_config.correction_ratio - 0.18f) < 0.001f);
@@ -407,6 +463,7 @@ static void assert_h4_line_config(void)
         0.001f);
     assert(fabsf(g_line_config.curve_hold_maximum_correction_mm_s -
         60.0f) < 0.001f);
+    assert(g_line_config.curve_exit_fade_ms == 0U);
     assert(g_line_config.curve_hold_maximum_correction_mm_s <=
         g_line_config.outer_single_maximum_correction_mm_s);
 }
@@ -415,14 +472,15 @@ static void assert_h5_h6_line_config(void)
 {
     assert(fabsf(g_line_config.correction_ratio - 0.20f) < 0.001f);
     assert(fabsf(g_line_config.maximum_correction_mm_s - 70.0f) < 0.001f);
-    assert(fabsf(g_line_config.outer_single_correction_ratio - 0.24f) <
+    assert(fabsf(g_line_config.outer_single_correction_ratio - 0.22f) <
         0.001f);
     assert(fabsf(g_line_config.outer_single_maximum_correction_mm_s -
-        70.0f) < 0.001f);
-    assert(fabsf(g_line_config.curve_hold_correction_ratio - 0.18f) <
+        60.0f) < 0.001f);
+    assert(fabsf(g_line_config.curve_hold_correction_ratio - 0.16f) <
         0.001f);
     assert(fabsf(g_line_config.curve_hold_maximum_correction_mm_s -
-        60.0f) < 0.001f);
+        50.0f) < 0.001f);
+    assert(g_line_config.curve_exit_fade_ms == 120U);
 }
 
 static void prepare_setup_without_vision(void)
@@ -489,10 +547,19 @@ static void test_setup_display_reports_wait_reason(void)
     reset_mocks();
     assert(h456_app_init() == ML_STATUS_OK);
     prepare_setup_without_vision();
+    assert(get_status().mode == H456_MODE_6);
     assert(strcmp(g_oled_lines[3], "WAIT VISION     ") == 0);
     assert(g_velocity_commands == 0U);
 
     g_ball.vision_ready = true;
+    g_ball.position_cm = 13.0f;
+    poll_count(5U);
+    status = get_status();
+    assert(status.state == H456_APP_SETUP);
+    assert(strcmp(g_oled_lines[3], "WAIT <=12.5CM   ") == 0);
+
+    press_key(GPIOA, ML_KEY_UP_PIN);
+    assert(get_status().mode == H456_MODE_4);
     g_ball.position_cm = 1.0f;
     poll_count(5U);
     status = get_status();
@@ -518,39 +585,104 @@ static void test_setup_display_reports_wait_reason(void)
     assert(strcmp(g_oled_lines[3], "C=GO U/D=MODE   ") == 0);
 }
 
+static void test_default_h6_tracks_current_position_before_ready(void)
+{
+    h456_app_status_t status;
+
+    reset_mocks();
+    assert(h456_app_init() == ML_STATUS_OK);
+    g_ball.vision_ready = true;
+    g_ball.position_cm = 2.0f;
+    poll_count(1U);
+    status = get_status();
+    assert(status.mode == H456_MODE_6);
+    assert(status.state == H456_APP_CALIBRATING);
+    assert(fabsf(status.target_cm - 2.0f) < 0.01f);
+    assert(fabsf(status.ball_error_cm) < 0.01f);
+    assert(g_ball.enabled);
+    assert(g_velocity_commands == 0U);
+
+    poll_count(38U);
+    status = get_status();
+    assert(status.state == H456_APP_READY);
+    assert(fabsf(status.target_cm - 2.0f) < 0.01f);
+    assert(strcmp(g_oled_lines[2], "AUTO LOCK PB24  ") == 0);
+    assert(strcmp(g_oled_lines[3], "C=GO U/D=MODE   ") == 0);
+}
+
+static void test_center_held_through_ready_does_not_start(void)
+{
+    h456_app_status_t status;
+
+    reset_mocks();
+    hold_key(GPIOB, ML_KEY_CENTER_PIN);
+    assert(h456_app_init() == ML_STATUS_OK);
+    g_ball.vision_ready = true;
+    g_ball.position_cm = 2.0f;
+    poll_count(50U);
+    status = get_status();
+    assert(status.mode == H456_MODE_6);
+    assert(status.state == H456_APP_READY);
+    assert(fabsf(status.target_cm - 2.0f) < 0.01f);
+    assert(g_velocity_commands == 0U);
+    assert(strcmp(g_oled_lines[3], "REL PB24        ") == 0);
+
+    release_key(GPIOB, ML_KEY_CENTER_PIN);
+    poll_count(5U);
+    status = get_status();
+    assert(status.state == H456_APP_READY);
+    assert(g_velocity_commands == 0U);
+    assert(strcmp(g_oled_lines[3], "C=GO U/D=MODE   ") == 0);
+
+    g_ball.position_cm = 2.3f;
+    poll_count(1U);
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    status = get_status();
+    assert(status.state == H456_APP_RUNNING);
+    assert(fabsf(status.target_cm - 2.3f) < 0.01f);
+    assert(fabsf(status.ball_error_cm) < 0.01f);
+}
+
 static void test_mode_target_start_freeze_and_emergency(void)
 {
     h456_app_status_t status;
     uint32_t oled_at_start;
+    float locked_target;
 
     reset_mocks();
     assert(h456_app_init() == ML_STATUS_OK);
     prepare_ready();
-    press_key(GPIOA, ML_KEY_UP_PIN);
-    status = get_status();
-    assert(status.mode == H456_MODE_5);
-    assert(g_velocity_commands == 0U);
-    poll_count(27U);
-    press_key(GPIOA, ML_KEY_UP_PIN);
     status = get_status();
     assert(status.mode == H456_MODE_6);
+    assert(g_velocity_commands == 0U);
+    g_ball.position_cm = 2.0f;
     poll_count(27U);
+    status = get_status();
+    assert(status.state == H456_APP_READY);
+    assert(fabsf(status.target_cm - 2.0f) < 0.01f);
+    assert(g_velocity_commands == 0U);
+    assert(strcmp(g_oled_lines[2], "AUTO LOCK PB24  ") == 0);
+    press_key(GPIOB, ML_KEY_LEFT_PIN);
+    status = get_status();
+    assert(fabsf(status.target_cm - 2.0f) < 0.01f);
     press_key(GPIOB, ML_KEY_RIGHT_PIN);
     status = get_status();
-    assert(fabsf(status.target_cm - 0.5f) < 0.01f);
+    assert(fabsf(status.target_cm - 2.0f) < 0.01f);
     assert(g_velocity_commands == 0U);
-    g_ball.position_cm = 0.5f;
-    poll_count(27U);
+    g_ball.position_cm = 2.3f;
+    poll_count(1U);
     assert(get_status().state == H456_APP_READY);
 
     press_key(GPIOB, ML_KEY_CENTER_PIN);
     status = get_status();
     assert(status.state == H456_APP_RUNNING);
     assert(status.oled_frozen);
-    assert(fabsf(status.target_cm - 0.5f) < 0.01f);
+    assert(fabsf(status.target_cm - 2.3f) < 0.01f);
+    assert(fabsf(status.ball_error_cm) < 0.01f);
+    locked_target = status.target_cm;
     assert_h5_h6_line_config();
     assert(g_control_bias_us > 0.0f);
-    assert(g_control_bias_us <= 100.0f);
+    assert(g_control_bias_us <= 60.0f);
     assert(g_velocity_commands > 0U);
     oled_at_start = g_oled_writes;
     poll_count(8U);
@@ -558,18 +690,18 @@ static void test_mode_target_start_freeze_and_emergency(void)
     assert(g_control_bias_us > 0.0f);
     poll_count(40U);
     assert(g_control_bias_us > 0.0f);
-    assert(g_control_bias_us < 100.0f);
+    assert(g_control_bias_us < 60.0f);
     poll_count(50U);
     assert(g_control_bias_us > 0.0f);
-    assert(g_control_bias_us < 100.0f);
-    poll_count(60U);
+    assert(g_control_bias_us < 60.0f);
+    poll_count(25U);
     assert(g_control_bias_us > 0.0f);
-    assert(g_control_bias_us < 100.0f);
-    poll_count(150U);
+    assert(g_control_bias_us < 60.0f);
+    poll_count(30U);
     assert(g_control_bias_us == 0.0f);
     assert(g_oled_writes == oled_at_start);
 
-    g_ball.position_cm = -0.7f;
+    g_ball.position_cm = locked_target - 1.2f;
     poll_count(1U);
     status = get_status();
     assert(status.ball_violation);
@@ -584,14 +716,205 @@ static void test_mode_target_start_freeze_and_emergency(void)
     assert(g_ball.servo_current_us == BALL_SERVO_CENTER_US);
 }
 
+static void test_h6_positive_target_uses_stronger_launch_bias(void)
+{
+    h456_app_status_t status;
+
+    reset_mocks();
+    assert(h456_app_init() == ML_STATUS_OK);
+    prepare_ready();
+    g_ball.position_cm = 6.0f;
+    poll_count(27U);
+    status = get_status();
+    assert(status.mode == H456_MODE_6);
+    assert(status.state == H456_APP_READY);
+    assert(fabsf(status.target_cm - 6.0f) < 0.01f);
+
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    status = get_status();
+    assert(status.state == H456_APP_RUNNING);
+    assert(fabsf(status.target_cm - 6.0f) < 0.01f);
+    assert(g_control_bias_us > 150.0f);
+    assert(g_control_bias_us <= 160.0f);
+
+    poll_count(120U);
+    assert(g_control_bias_us > 0.0f);
+    assert(g_control_bias_us < 160.0f);
+    poll_count(40U);
+    assert(g_control_bias_us == 0.0f);
+}
+
+static void test_h6_far_positive_target_uses_extended_launch_bias(void)
+{
+    h456_app_status_t status;
+
+    reset_mocks();
+    assert(h456_app_init() == ML_STATUS_OK);
+    prepare_ready();
+    g_ball.position_cm = 9.0f;
+    poll_count(27U);
+    status = get_status();
+    assert(status.mode == H456_MODE_6);
+    assert(status.state == H456_APP_READY);
+    assert(fabsf(status.target_cm - 9.0f) < 0.01f);
+
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    status = get_status();
+    assert(status.state == H456_APP_RUNNING);
+    assert(fabsf(status.target_cm - 9.0f) < 0.01f);
+    assert(g_control_bias_us > 180.0f);
+    assert(g_control_bias_us <= 190.0f);
+
+    poll_count(150U);
+    assert(g_control_bias_us > 0.0f);
+    assert(g_control_bias_us < 190.0f);
+    poll_count(110U);
+    assert(g_control_bias_us == 0.0f);
+}
+
+static void test_h6_center_target_keeps_mild_launch_bias(void)
+{
+    h456_app_status_t status;
+
+    reset_mocks();
+    assert(h456_app_init() == ML_STATUS_OK);
+    prepare_ready();
+    g_ball.position_cm = 0.0f;
+    poll_count(27U);
+    status = get_status();
+    assert(status.mode == H456_MODE_6);
+    assert(status.state == H456_APP_READY);
+    assert(fabsf(status.target_cm) < 0.01f);
+
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    status = get_status();
+    assert(status.state == H456_APP_RUNNING);
+    assert(g_control_bias_us > 0.0f);
+    assert(g_control_bias_us <= 60.0f);
+}
+
+static void test_h6_negative_targets_use_corrected_positive_launch_bias(void)
+{
+    h456_app_status_t status;
+
+    reset_mocks();
+    assert(h456_app_init() == ML_STATUS_OK);
+    prepare_ready();
+    g_ball.position_cm = -4.0f;
+    poll_count(27U);
+    status = get_status();
+    assert(status.mode == H456_MODE_6);
+    assert(status.state == H456_APP_READY);
+    assert(fabsf(status.target_cm + 4.0f) < 0.01f);
+
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    status = get_status();
+    assert(status.state == H456_APP_RUNNING);
+    assert(g_control_bias_us > 50.0f);
+    assert(g_control_bias_us <= 60.0f);
+
+    poll_count(150U);
+    assert(g_control_bias_us > 0.0f);
+    assert(g_control_bias_us < 60.0f);
+    poll_count(110U);
+    assert(g_control_bias_us == 0.0f);
+
+    reset_mocks();
+    assert(h456_app_init() == ML_STATUS_OK);
+    prepare_ready();
+    g_ball.position_cm = -6.0f;
+    poll_count(27U);
+    status = get_status();
+    assert(status.mode == H456_MODE_6);
+    assert(status.state == H456_APP_READY);
+    assert(fabsf(status.target_cm + 6.0f) < 0.01f);
+
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    status = get_status();
+    assert(status.state == H456_APP_RUNNING);
+    assert(g_control_bias_us > 50.0f);
+    assert(g_control_bias_us <= 60.0f);
+
+    poll_count(150U);
+    assert(g_control_bias_us > 0.0f);
+    assert(g_control_bias_us < 60.0f);
+    poll_count(110U);
+    assert(g_control_bias_us == 0.0f);
+
+    reset_mocks();
+    assert(h456_app_init() == ML_STATUS_OK);
+    prepare_ready();
+    g_ball.position_cm = -9.0f;
+    poll_count(27U);
+    status = get_status();
+    assert(status.mode == H456_MODE_6);
+    assert(status.state == H456_APP_READY);
+    assert(fabsf(status.target_cm + 9.0f) < 0.01f);
+
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    status = get_status();
+    assert(status.state == H456_APP_RUNNING);
+    assert(g_control_bias_us > 70.0f);
+    assert(g_control_bias_us <= 80.0f);
+
+    poll_count(150U);
+    assert(g_control_bias_us > 0.0f);
+    assert(g_control_bias_us < 80.0f);
+    poll_count(151U);
+    assert(g_control_bias_us == 0.0f);
+}
+
+static void test_h6_position_range_gate(void)
+{
+    h456_app_status_t status;
+
+    reset_mocks();
+    assert(h456_app_init() == ML_STATUS_OK);
+    prepare_ready();
+    assert(get_status().mode == H456_MODE_6);
+
+    g_ball.position_cm = 12.6f;
+    g_ball.velocity_cm_per_s = 0.0f;
+    poll_count(27U);
+    status = get_status();
+    assert(status.state == H456_APP_SETUP);
+    assert(strcmp(g_oled_lines[3], "WAIT <=12.5CM   ") == 0);
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    status = get_status();
+    assert(status.state == H456_APP_SETUP);
+    assert(g_velocity_commands == 0U);
+
+    g_ball.position_cm = 12.5f;
+    poll_count(27U);
+    status = get_status();
+    assert(status.state == H456_APP_READY);
+    assert(fabsf(status.target_cm - 12.5f) < 0.01f);
+
+    g_ball.position_cm = -12.5f;
+    poll_count(27U);
+    status = get_status();
+    assert(status.state == H456_APP_READY);
+    assert(fabsf(status.target_cm + 12.5f) < 0.01f);
+
+    g_ball.position_cm = -12.6f;
+    poll_count(27U);
+    status = get_status();
+    assert(status.state == H456_APP_SETUP);
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    status = get_status();
+    assert(status.state == H456_APP_SETUP);
+    assert(g_velocity_commands == 0U);
+}
+
 static void test_h4_line_config_and_heading_protection(void)
 {
     h456_app_status_t status;
 
     reset_mocks();
     assert(h456_app_init() == ML_STATUS_OK);
-    assert_h4_line_config();
     prepare_ready();
+    select_h4_ready();
+    assert_h4_line_config();
     press_key(GPIOB, ML_KEY_CENTER_PIN);
     assert(get_status().state == H456_APP_RUNNING);
     assert_h4_line_config();
@@ -602,6 +925,7 @@ static void test_h4_line_config_and_heading_protection(void)
     g_imu_yaw_deg = 7.0f;
     poll_count(1U);
     assert(g_last_heading_only);
+    assert(fabsf(g_last_heading_feedback_rad_s + 0.35f) < 0.001f);
 
     g_imu_yaw_deg = 4.0f;
     poll_count(1U);
@@ -620,11 +944,8 @@ static void test_h5_uses_lap_line_config_and_no_h4_heading_only(void)
     reset_mocks();
     assert(h456_app_init() == ML_STATUS_OK);
     prepare_ready();
-    press_key(GPIOA, ML_KEY_UP_PIN);
-    assert(get_status().mode == H456_MODE_5);
+    select_h5_ready();
     assert_h5_h6_line_config();
-    poll_count(27U);
-    assert(get_status().state == H456_APP_READY);
 
     press_key(GPIOB, ML_KEY_CENTER_PIN);
     assert(get_status().state == H456_APP_RUNNING);
@@ -634,6 +955,71 @@ static void test_h5_uses_lap_line_config_and_no_h4_heading_only(void)
     assert_h5_h6_line_config();
     assert(g_control_bias_us > 0.0f);
     assert(g_control_bias_us <= 100.0f);
+    poll_count(150U);
+    assert(g_control_bias_us > 0.0f);
+    assert(g_control_bias_us < 100.0f);
+    poll_count(151U);
+    assert(g_control_bias_us == 0.0f);
+}
+
+static void test_h5_cd_protection_limits_heading_feedback(void)
+{
+    reset_mocks();
+    assert(h456_app_init() == ML_STATUS_OK);
+    prepare_ready();
+    select_h5_ready();
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    assert(get_status().state == H456_APP_RUNNING);
+
+    g_imu_yaw_deg = 210.0f;
+    g_chassis.pose.left_distance_mm = 3000.0f;
+    g_chassis.pose.right_distance_mm = 3000.0f;
+    poll_count(1U);
+    assert(fabsf(g_last_heading_feedback_rad_s + 0.35f) < 0.001f);
+
+    g_chassis.pose.left_distance_mm = 3500.0f;
+    g_chassis.pose.right_distance_mm = 3500.0f;
+    poll_count(1U);
+    assert(fabsf(g_last_heading_feedback_rad_s + 0.16f) < 0.001f);
+
+    g_chassis.pose.left_distance_mm = 4300.0f;
+    g_chassis.pose.right_distance_mm = 4300.0f;
+    poll_count(1U);
+    assert(fabsf(g_last_heading_feedback_rad_s + 0.35f) < 0.001f);
+}
+
+static void test_h5_cd_protection_ramps_final_bias(void)
+{
+    float first_bias;
+    float second_bias;
+    float exit_bias;
+
+    reset_mocks();
+    assert(h456_app_init() == ML_STATUS_OK);
+    prepare_ready();
+    select_h5_ready();
+    press_key(GPIOB, ML_KEY_CENTER_PIN);
+    assert(get_status().state == H456_APP_RUNNING);
+
+    g_force_line_bias = true;
+    g_forced_line_bias_mm_s = 9.0f;
+    g_chassis.pose.left_distance_mm = 3500.0f;
+    g_chassis.pose.right_distance_mm = 3500.0f;
+    poll_count(1U);
+    first_bias = commanded_steering_bias_mm_s();
+    assert(fabsf(first_bias - 9.0f) < 0.001f);
+
+    g_forced_line_bias_mm_s = -48.0f;
+    poll_count(1U);
+    second_bias = commanded_steering_bias_mm_s();
+    assert(fabsf((second_bias - first_bias) + 8.0f) < 0.01f);
+    assert(second_bias > -48.0f);
+
+    g_chassis.pose.left_distance_mm = 4300.0f;
+    g_chassis.pose.right_distance_mm = 4300.0f;
+    poll_count(1U);
+    exit_bias = commanded_steering_bias_mm_s();
+    assert(fabsf(exit_bias + 48.0f) < 0.01f);
 }
 
 static void test_launch_bias_clears_on_finish(void)
@@ -643,6 +1029,7 @@ static void test_launch_bias_clears_on_finish(void)
     reset_mocks();
     assert(h456_app_init() == ML_STATUS_OK);
     prepare_ready();
+    select_h4_ready();
     press_key(GPIOB, ML_KEY_CENTER_PIN);
     assert(get_status().state == H456_APP_RUNNING);
     assert(g_control_bias_us > 0.0f);
@@ -664,6 +1051,7 @@ static void test_sustained_two_cm_error_stops(void)
     reset_mocks();
     assert(h456_app_init() == ML_STATUS_OK);
     prepare_ready();
+    select_h4_ready();
     press_key(GPIOB, ML_KEY_CENTER_PIN);
     assert(get_status().state == H456_APP_RUNNING);
     g_ball.position_cm = -2.1f;
@@ -683,6 +1071,7 @@ static void test_score_boundary_confirmation_gate(void)
     reset_mocks();
     assert(h456_app_init() == ML_STATUS_OK);
     prepare_ready();
+    select_h4_ready();
     press_key(GPIOB, ML_KEY_CENTER_PIN);
     assert(get_status().state == H456_APP_RUNNING);
 
@@ -727,6 +1116,7 @@ static void test_ball_score_freezes_on_pass_cycle(void)
     reset_mocks();
     assert(h456_app_init() == ML_STATUS_OK);
     prepare_ready();
+    select_h4_ready();
     press_key(GPIOB, ML_KEY_CENTER_PIN);
     assert(get_status().state == H456_APP_RUNNING);
 
@@ -752,9 +1142,18 @@ int main(void)
     test_init_failure_keeps_oled_diagnostic_visible();
     test_line_config_failure_reports_specific_oled_reason();
     test_setup_display_reports_wait_reason();
+    test_default_h6_tracks_current_position_before_ready();
+    test_center_held_through_ready_does_not_start();
     test_mode_target_start_freeze_and_emergency();
+    test_h6_positive_target_uses_stronger_launch_bias();
+    test_h6_far_positive_target_uses_extended_launch_bias();
+    test_h6_center_target_keeps_mild_launch_bias();
+    test_h6_negative_targets_use_corrected_positive_launch_bias();
+    test_h6_position_range_gate();
     test_h4_line_config_and_heading_protection();
     test_h5_uses_lap_line_config_and_no_h4_heading_only();
+    test_h5_cd_protection_limits_heading_feedback();
+    test_h5_cd_protection_ramps_final_bias();
     test_launch_bias_clears_on_finish();
     test_sustained_two_cm_error_stops();
     test_score_boundary_confirmation_gate();

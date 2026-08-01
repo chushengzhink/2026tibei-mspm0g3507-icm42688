@@ -8,6 +8,8 @@
 
 #define Q3_TELEMETRY_CAPACITY (512U)
 
+void q3_telemetry_storage_init(void);
+ml_status_t q3_telemetry_uart0_init(void);
 ml_status_t q3_telemetry_init(void);
 void q3_telemetry_session_start(void);
 void q3_telemetry_session_finish(const q3_ball_status_t *status);

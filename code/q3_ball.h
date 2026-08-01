@@ -50,6 +50,38 @@ typedef enum {
     Q3_RESCUE_HOLD
 } q3_rescue_stage_t;
 
+typedef enum {
+    Q3_CORE_INIT_START = 0,
+    Q3_CORE_INIT_CORE = Q3_CORE_INIT_START,
+    Q3_CORE_INIT_UART2,
+    Q3_CORE_INIT_SERVO,
+    Q3_CORE_INIT_TIMG6,
+    Q3_CORE_INIT_SAFE,
+    Q3_CORE_INIT_COMPLETE
+} q3_core_init_stage_t;
+
+typedef void (*q3_core_init_progress_t)(q3_core_init_stage_t stage,
+    void *context);
+
+typedef enum {
+    Q3_CAL_FAULT_NONE = 0,
+    Q3_CAL_FAULT_BOOT_TIMEOUT,
+    Q3_CAL_FAULT_POSITION_LIMIT,
+    Q3_CAL_FAULT_PLUS_DIRECTION,
+    Q3_CAL_FAULT_MINUS_DIRECTION,
+    Q3_CAL_FAULT_RECENTER_TIMEOUT
+} q3_cal_fault_reason_t;
+
+typedef enum {
+    Q3_VISION_DIAG_NO_RX = 0,
+    Q3_VISION_DIAG_LOST,
+    Q3_VISION_DIAG_LOW_SCORE,
+    Q3_VISION_DIAG_SLOW_FRAME,
+    Q3_VISION_DIAG_WAIT_STREAK,
+    Q3_VISION_DIAG_MOVE_TO_O,
+    Q3_VISION_DIAG_OK
+} q3_vision_diag_t;
+
 typedef struct {
     float position_cm;
     float balance_command_us;
@@ -66,6 +98,9 @@ typedef struct {
     q3_state_t state;
     q3_mode_t mode;
     q3_rescue_stage_t rescue_stage;
+    q3_state_t cal_fault_state;
+    q3_cal_fault_reason_t cal_fault_reason;
+    q3_vision_diag_t vision_diag;
     bool initialized;
     bool vision_ready;
     bool profile_valid;
@@ -73,11 +108,13 @@ typedef struct {
     bool sequence_completed;
     bool plus_captured;
     bool final_captured;
+    bool final_capture_latched;
     bool brake_active;
     bool servo_settled;
     int8_t axis_sign;
     uint8_t profile_index;
     uint8_t rescue_attempts;
+    uint8_t vision_valid_streak;
     float neutral_us;
     float response_scale;
     float target_cm;
@@ -97,6 +134,7 @@ typedef struct {
     uint32_t sequence_elapsed_ms;
     uint32_t vision_age_ms;
     uint32_t vision_frame_interval_ms;
+    uint32_t vision_last_diag_interval_ms;
     uint32_t stall_elapsed_ms;
     uint32_t valid_frames;
     uint32_t crc_errors;
@@ -107,6 +145,9 @@ typedef struct {
 } q3_ball_status_t;
 
 ml_status_t q3_ball_init(void);
+ml_status_t q3_ball_init_with_progress(q3_core_init_progress_t progress,
+    void *context);
+q3_core_init_stage_t q3_ball_get_init_stage(void);
 void q3_ball_process(void);
 ml_status_t q3_ball_start(void);
 ml_status_t q3_ball_abort(void);

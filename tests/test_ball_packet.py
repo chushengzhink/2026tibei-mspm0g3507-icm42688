@@ -193,6 +193,38 @@ def run_tests():
     assert "RAWCM" in main_source
     assert "FIXCM" in main_source
 
+    h6_source = (Path(__file__).parents[1] / "maixcam" / "h6_maix.py").read_text(
+        encoding="utf-8"
+    )
+    h6_module = ast.parse(h6_source)
+    h6_executable_nodes = []
+    h6_executable_nodes.extend(
+        collect_constant_assignments(h6_module, required_names)
+    )
+    for node in h6_module.body:
+        if isinstance(node, ast.FunctionDef) and node.name in {
+            "crc16_ibm", "interpolate_position_cm", "map_center_x",
+            "encode_ball",
+        }:
+            h6_executable_nodes.append(node)
+    h6_namespace = {"struct": struct, "time": __import__("time")}
+    exec(compile(ast.Module(body=h6_executable_nodes, type_ignores=[]),
+                 "maixcam/h6_maix.py", "exec"), h6_namespace)
+    h6_namespace["half_width"] = 160.0
+    assert h6_namespace["BALL_PERCENT_TO_CM_POINTS"] == TEST_PERCENT_TO_CM_POINTS
+    h6_frame = h6_namespace["encode_ball"](detected)
+    h6_lost_frame = h6_namespace["encode_ball"](None)
+    assert len(h6_frame) == 32
+    assert len(h6_lost_frame) == 32
+    assert h6_frame[:4] == HEADER
+    assert struct.unpack_from("<I", h6_frame, 4)[0] == 24
+    assert struct.unpack_from("<B", h6_lost_frame, 26)[0] == 0
+    assert abs(struct.unpack_from("<f", h6_frame, 18)[0] - 1.1775362319) < 1e-5
+    assert "serial_dev.write(encode_ball(ball_info))" in h6_source
+    assert "RAWCM" in h6_source
+    assert "FIXCM" in h6_source
+    assert "H6 MSP LOCK PB24" in h6_source
+
 
 if __name__ == "__main__":
     run_tests()

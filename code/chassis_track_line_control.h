@@ -34,6 +34,7 @@ typedef struct {
     uint16_t outer_lost_taper_ms;
     uint8_t reverse_confirm_cycles;
     uint8_t curve_exit_confirm_cycles;
+    uint16_t curve_exit_fade_ms;
     bool curve_memory_enabled;
 } chassis_track_line_control_config_t;
 
@@ -50,6 +51,9 @@ typedef struct {
     uint8_t pending_cycles;
     uint8_t curve_exit_cycles;
     uint16_t lost_ms;
+    uint16_t curve_exit_fade_remaining_ms;
+    float curve_exit_fade_start_final_bias_mm_s;
+    float last_final_steering_bias_mm_s;
     bool has_valid_error;
     bool initialized;
 } chassis_track_line_control_t;

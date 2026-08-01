@@ -30,8 +30,20 @@
 #define H456_APP_BALL_ABORT_HOLD_MS      (100U)
 #define H456_APP_H4_LAUNCH_BIAS_US       (60.0f)
 #define H456_APP_H4_LAUNCH_BIAS_MS       (6000U)
-#define H456_APP_LAP_LAUNCH_BIAS_US      (100.0f)
-#define H456_APP_LAP_LAUNCH_BIAS_MS      (6000U)
+#define H456_APP_H5_LAUNCH_BIAS_US       (100.0f)
+#define H456_APP_H5_LAUNCH_BIAS_MS       (6000U)
+#define H456_APP_H6_LAUNCH_BIAS_US       (60.0f)
+#define H456_APP_H6_LAUNCH_BIAS_MS       (3000U)
+#define H456_APP_H6_POSITIVE_TARGET_CM   (3.0f)
+#define H456_APP_H6_FAR_POSITIVE_TARGET_CM (8.0f)
+#define H456_APP_H6_POSITIVE_LAUNCH_BIAS_US (160.0f)
+#define H456_APP_H6_FAR_POSITIVE_LAUNCH_BIAS_US (190.0f)
+#define H456_APP_H6_NEGATIVE_TARGET_CM   (-3.0f)
+#define H456_APP_H6_FAR_NEGATIVE_TARGET_CM (-8.0f)
+#define H456_APP_H6_NEGATIVE_LAUNCH_BIAS_US (60.0f)
+#define H456_APP_H6_FAR_NEGATIVE_LAUNCH_BIAS_US (80.0f)
+#define H456_APP_H6_FAR_LAUNCH_BIAS_MS   (5000U)
+#define H456_APP_H6_FAR_NEGATIVE_LAUNCH_BIAS_MS (6000U)
 #define H456_APP_H4_LINE_CORRECTION_RATIO (0.18f)
 #define H456_APP_H4_LINE_CORRECTION_MAX_MM_S (60.0f)
 #define H456_APP_H4_OUTER_CORRECTION_RATIO (0.28f)
@@ -40,17 +52,23 @@
     H456_APP_H4_LINE_CORRECTION_RATIO
 #define H456_APP_H4_CURVE_HOLD_CORRECTION_MAX_MM_S \
     H456_APP_H4_LINE_CORRECTION_MAX_MM_S
+#define H456_APP_H4_CURVE_EXIT_FADE_MS   (0U)
 #define H456_APP_LAP_LINE_CORRECTION_RATIO (0.20f)
 #define H456_APP_LAP_LINE_CORRECTION_MAX_MM_S (70.0f)
-#define H456_APP_LAP_OUTER_CORRECTION_RATIO (0.24f)
-#define H456_APP_LAP_OUTER_CORRECTION_MAX_MM_S (70.0f)
-#define H456_APP_LAP_CURVE_HOLD_CORRECTION_RATIO (0.18f)
-#define H456_APP_LAP_CURVE_HOLD_CORRECTION_MAX_MM_S (60.0f)
+#define H456_APP_LAP_OUTER_CORRECTION_RATIO (0.22f)
+#define H456_APP_LAP_OUTER_CORRECTION_MAX_MM_S (60.0f)
+#define H456_APP_LAP_CURVE_HOLD_CORRECTION_RATIO (0.16f)
+#define H456_APP_LAP_CURVE_HOLD_CORRECTION_MAX_MM_S (50.0f)
+#define H456_APP_LAP_CURVE_EXIT_FADE_MS  (120U)
+#define H456_APP_LAP_CD_PROTECT_START_MM (3200.0f)
+#define H456_APP_LAP_CD_PROTECT_END_MM   (4200.0f)
+#define H456_APP_LAP_CD_HEADING_MAX_RAD_S (0.16f)
+#define H456_APP_LAP_CD_BIAS_STEP_MM_S   (8.0f)
 #define H456_APP_H4_HEADING_ONLY_ENTER_DEG (6.0f)
 #define H456_APP_H4_HEADING_ONLY_EXIT_DEG  (3.0f)
-#define H456_APP_H6_TARGET_MIN_CM        (-10.0f)
-#define H456_APP_H6_TARGET_MAX_CM        (10.0f)
-#define H456_APP_H6_TARGET_STEP_CM       (0.5f)
+#define H456_APP_H6_TARGET_MIN_CM        (-12.5f)
+#define H456_APP_H6_TARGET_MAX_CM        (12.5f)
+#define H456_APP_H6_TARGET_UPDATE_EPS_CM (0.05f)
 
 typedef struct {
     icm42688_service_t imu;
@@ -76,6 +94,7 @@ typedef struct {
     float maximum_score_error_cm;
     float interval_error_min_cm;
     float interval_error_max_cm;
+    float cd_protect_last_bias_mm_s;
     uint32_t ball_settle_start_ms;
     uint32_t ball_score_over_start_ms;
     uint32_t ball_abort_start_ms;
@@ -94,6 +113,9 @@ typedef struct {
     bool h4_heading_only_active;
     bool score_frozen;
     bool velocity_started;
+    bool cd_protect_bias_active;
+    bool center_key_down;
+    bool start_key_armed;
     bool display_dirty;
     bool initialized;
 } h456_app_context_t;
@@ -128,6 +150,17 @@ static float h456_app_clamp(float value, float minimum, float maximum)
         return maximum;
     }
     return value;
+}
+
+static float h456_app_ramp(float current, float target, float step)
+{
+    if (current < target - step) {
+        return current + step;
+    }
+    if (current > target + step) {
+        return current - step;
+    }
+    return target;
 }
 
 static bool h456_key_pressed(
@@ -193,9 +226,21 @@ static const char *h456_setup_wait_text(void)
     if (!g_app.ball.vision_ready) {
         return "WAIT VISION";
     }
+    if ((g_app.mode == H456_MODE_6) &&
+        ((g_app.ball.position_cm < H456_APP_H6_TARGET_MIN_CM) ||
+         (g_app.ball.position_cm > H456_APP_H6_TARGET_MAX_CM))) {
+        return "WAIT <=12.5CM";
+    }
     if (!g_app.ball.enabled ||
         (g_app.ball.state != BALL_BALANCE_ACTIVE)) {
         return "WAIT CTRL ACTIVE";
+    }
+    if (g_app.mode == H456_MODE_6) {
+        if (h456_app_abs(g_app.ball.velocity_cm_per_s) >
+            H456_APP_BALL_READY_SPEED_CM_S) {
+            return "WAIT SPD <=1.0";
+        }
+        return "SETTLE 500MS";
     }
     if (h456_app_abs(g_app.ball.error_cm) >
         H456_APP_BALL_READY_ERROR_CM) {
@@ -262,9 +307,10 @@ static void h456_show(void)
             (long) h456_app_abs((float) (ball_tenths % 10)));
         h456_show_line(2U, line);
         h456_show_line(3U, g_app.mode == H456_MODE_6 ?
-            "L/R TARGET 0.5" : "TARGET FIXED 0");
+            "AUTO LOCK PB24" : "TARGET FIXED 0");
         h456_show_line(4U, g_app.state == H456_APP_READY ?
-            "C=GO U/D=MODE" : h456_setup_wait_text());
+            (g_app.start_key_armed ? "C=GO U/D=MODE" : "REL PB24") :
+            h456_setup_wait_text());
     } else if (g_app.state == H456_APP_FINISHED) {
         (void) snprintf(line, sizeof(line), "H%u %s T%02lu.%01lu",
             (unsigned int) g_app.mode,
@@ -312,8 +358,10 @@ static void h456_show(void)
 
 static void h456_update_keys(uint32_t now_ms)
 {
+    g_app.center_key_down =
+        h456_key_pressed(ML_KEY_CENTER_PORT, ML_KEY_CENTER_PIN);
     chassis_key_update(&g_app.center_key,
-        h456_key_pressed(ML_KEY_CENTER_PORT, ML_KEY_CENTER_PIN), now_ms);
+        g_app.center_key_down, now_ms);
     chassis_key_update(&g_app.up_key,
         h456_key_pressed(ML_KEY_UP_PORT, ML_KEY_UP_PIN), now_ms);
     chassis_key_update(&g_app.down_key,
@@ -331,6 +379,26 @@ static void h456_require_key_release(void)
     chassis_key_require_release(&g_app.down_key);
     chassis_key_require_release(&g_app.left_key);
     chassis_key_require_release(&g_app.right_key);
+}
+
+static void h456_disarm_start_key(void)
+{
+    if (g_app.start_key_armed) {
+        g_app.display_dirty = true;
+    }
+    g_app.start_key_armed = false;
+}
+
+static void h456_update_start_key_arming(void)
+{
+    if (g_app.state != H456_APP_READY) {
+        h456_disarm_start_key();
+        return;
+    }
+    if (!g_app.center_key_down && !g_app.start_key_armed) {
+        g_app.start_key_armed = true;
+        g_app.display_dirty = true;
+    }
 }
 
 static ml_status_t h456_configure_line_control(h456_mode_t mode)
@@ -357,6 +425,8 @@ static ml_status_t h456_configure_line_control(h456_mode_t mode)
             H456_APP_H4_CURVE_HOLD_CORRECTION_RATIO;
         line_config.curve_hold_maximum_correction_mm_s =
             H456_APP_H4_CURVE_HOLD_CORRECTION_MAX_MM_S;
+        line_config.curve_exit_fade_ms =
+            H456_APP_H4_CURVE_EXIT_FADE_MS;
     } else {
         line_config.correction_ratio =
             H456_APP_LAP_LINE_CORRECTION_RATIO;
@@ -370,6 +440,8 @@ static ml_status_t h456_configure_line_control(h456_mode_t mode)
             H456_APP_LAP_CURVE_HOLD_CORRECTION_RATIO;
         line_config.curve_hold_maximum_correction_mm_s =
             H456_APP_LAP_CURVE_HOLD_CORRECTION_MAX_MM_S;
+        line_config.curve_exit_fade_ms =
+            H456_APP_LAP_CURVE_EXIT_FADE_MS;
     }
     return chassis_track_line_control_init(
         &g_app.line_control, &line_config);
@@ -383,6 +455,7 @@ static void h456_reset_settle(void)
     if (g_app.state == H456_APP_READY) {
         g_app.state = H456_APP_SETUP;
     }
+    h456_disarm_start_key();
 }
 
 static void h456_clear_launch_bias(void)
@@ -394,14 +467,93 @@ static void h456_clear_launch_bias(void)
     (void) ball_balance_set_control_bias_us(0.0f);
 }
 
+static bool h456_lap_cd_protection_active(void)
+{
+    return (g_app.mode != H456_MODE_4) &&
+        (g_app.mission_output.progress_mm >=
+         H456_APP_LAP_CD_PROTECT_START_MM) &&
+        (g_app.mission_output.progress_mm <=
+         H456_APP_LAP_CD_PROTECT_END_MM);
+}
+
+static void h456_reset_cd_protection(void)
+{
+    g_app.cd_protect_bias_active = false;
+    g_app.cd_protect_last_bias_mm_s = 0.0f;
+}
+
+static void h456_apply_cd_request_protection(
+    chassis_track_line_fusion_request_t *request)
+{
+    if (!h456_lap_cd_protection_active()) {
+        return;
+    }
+    request->heading_feedback_rad_s = h456_app_clamp(
+        request->heading_feedback_rad_s,
+        -H456_APP_LAP_CD_HEADING_MAX_RAD_S,
+        H456_APP_LAP_CD_HEADING_MAX_RAD_S);
+}
+
+static void h456_apply_cd_output_protection(void)
+{
+    float limited_bias;
+
+    if (!h456_lap_cd_protection_active()) {
+        h456_reset_cd_protection();
+        return;
+    }
+    if (!g_app.cd_protect_bias_active) {
+        g_app.cd_protect_bias_active = true;
+        g_app.cd_protect_last_bias_mm_s =
+            g_app.line_output.final_steering_bias_mm_s;
+        return;
+    }
+    limited_bias = h456_app_ramp(g_app.cd_protect_last_bias_mm_s,
+        g_app.line_output.final_steering_bias_mm_s,
+        H456_APP_LAP_CD_BIAS_STEP_MM_S);
+    g_app.cd_protect_last_bias_mm_s = limited_bias;
+    g_app.line_output.final_steering_bias_mm_s = limited_bias;
+    g_app.line_output.left_mm_s =
+        g_app.line_output.linear_mm_s - limited_bias;
+    g_app.line_output.right_mm_s =
+        g_app.line_output.linear_mm_s + limited_bias;
+    g_app.line_output.angular_rad_s =
+        (g_app.line_output.right_mm_s -
+         g_app.line_output.left_mm_s) /
+        g_chassis_race_config.effective_track_mm;
+}
+
+static void h456_select_h6_launch_bias(void)
+{
+    if (g_app.target_cm >= H456_APP_H6_FAR_POSITIVE_TARGET_CM) {
+        g_app.launch_bias_us = H456_APP_H6_FAR_POSITIVE_LAUNCH_BIAS_US;
+        g_app.launch_bias_duration_ms = H456_APP_H6_FAR_LAUNCH_BIAS_MS;
+    } else if (g_app.target_cm >= H456_APP_H6_POSITIVE_TARGET_CM) {
+        g_app.launch_bias_us = H456_APP_H6_POSITIVE_LAUNCH_BIAS_US;
+        g_app.launch_bias_duration_ms = H456_APP_H6_LAUNCH_BIAS_MS;
+    } else if (g_app.target_cm <= H456_APP_H6_FAR_NEGATIVE_TARGET_CM) {
+        g_app.launch_bias_us = H456_APP_H6_FAR_NEGATIVE_LAUNCH_BIAS_US;
+        g_app.launch_bias_duration_ms =
+            H456_APP_H6_FAR_NEGATIVE_LAUNCH_BIAS_MS;
+    } else if (g_app.target_cm <= H456_APP_H6_NEGATIVE_TARGET_CM) {
+        g_app.launch_bias_us = H456_APP_H6_NEGATIVE_LAUNCH_BIAS_US;
+        g_app.launch_bias_duration_ms = H456_APP_H6_FAR_LAUNCH_BIAS_MS;
+    } else {
+        g_app.launch_bias_us = H456_APP_H6_LAUNCH_BIAS_US;
+        g_app.launch_bias_duration_ms = H456_APP_H6_LAUNCH_BIAS_MS;
+    }
+}
+
 static void h456_start_launch_bias(uint32_t now_ms)
 {
     if (g_app.mode == H456_MODE_4) {
         g_app.launch_bias_us = H456_APP_H4_LAUNCH_BIAS_US;
         g_app.launch_bias_duration_ms = H456_APP_H4_LAUNCH_BIAS_MS;
+    } else if (g_app.mode == H456_MODE_5) {
+        g_app.launch_bias_us = H456_APP_H5_LAUNCH_BIAS_US;
+        g_app.launch_bias_duration_ms = H456_APP_H5_LAUNCH_BIAS_MS;
     } else {
-        g_app.launch_bias_us = H456_APP_LAP_LAUNCH_BIAS_US;
-        g_app.launch_bias_duration_ms = H456_APP_LAP_LAUNCH_BIAS_MS;
+        h456_select_h6_launch_bias();
     }
     g_app.launch_bias_active = true;
     g_app.launch_bias_start_ms = now_ms;
@@ -442,8 +594,42 @@ static ml_status_t h456_apply_target(void)
     return ML_STATUS_OK;
 }
 
+static bool h456_h6_position_lockable(void)
+{
+    return g_app.ball.vision_ready &&
+        (g_app.ball.position_cm >= H456_APP_H6_TARGET_MIN_CM) &&
+        (g_app.ball.position_cm <= H456_APP_H6_TARGET_MAX_CM);
+}
+
+static ml_status_t h456_set_h6_target_from_position(bool reset_settle)
+{
+    ml_status_t status;
+    float target_cm;
+
+    if (!h456_h6_position_lockable()) {
+        return ML_STATUS_BUSY;
+    }
+    target_cm = g_app.ball.position_cm;
+    if (!reset_settle &&
+        (h456_app_abs(g_app.target_cm - target_cm) <
+         H456_APP_H6_TARGET_UPDATE_EPS_CM)) {
+        return ML_STATUS_OK;
+    }
+    g_app.h6_target_cm = target_cm;
+    g_app.target_cm = target_cm;
+    status = ball_balance_set_target_cm(g_app.target_cm);
+    if (status == ML_STATUS_OK) {
+        (void) ball_balance_get_status(&g_app.ball);
+        if (reset_settle) {
+            h456_reset_settle();
+        }
+    }
+    return status;
+}
+
 static void h456_select_next_mode(bool forward)
 {
+    h456_disarm_start_key();
     if (forward) {
         g_app.mode = g_app.mode == H456_MODE_6 ?
             H456_MODE_4 : (h456_mode_t) ((uint8_t) g_app.mode + 1U);
@@ -451,35 +637,68 @@ static void h456_select_next_mode(bool forward)
         g_app.mode = g_app.mode == H456_MODE_4 ?
             H456_MODE_6 : (h456_mode_t) ((uint8_t) g_app.mode - 1U);
     }
-    g_app.target_cm = g_app.mode == H456_MODE_6 ?
-        g_app.h6_target_cm : 0.0f;
-    (void) h456_apply_target();
+    if (g_app.mode == H456_MODE_6) {
+        if (h456_set_h6_target_from_position(true) != ML_STATUS_OK) {
+            g_app.h6_target_cm = 0.0f;
+            g_app.target_cm = 0.0f;
+            (void) h456_apply_target();
+            (void) ball_balance_enable(false);
+            (void) ball_balance_get_status(&g_app.ball);
+        }
+    } else {
+        g_app.target_cm = 0.0f;
+        (void) h456_apply_target();
+    }
     g_app.h4_heading_only_active = false;
     (void) h456_configure_line_control(g_app.mode);
     g_app.display_dirty = true;
 }
 
-static void h456_adjust_h6_target(float delta_cm)
+static void h456_update_h6_candidate_target(void)
 {
+    float previous_target_cm = g_app.target_cm;
+
     if (g_app.mode != H456_MODE_6) {
         return;
     }
-    g_app.h6_target_cm = h456_app_clamp(
-        g_app.h6_target_cm + delta_cm,
-        H456_APP_H6_TARGET_MIN_CM, H456_APP_H6_TARGET_MAX_CM);
-    g_app.target_cm = g_app.h6_target_cm;
-    (void) h456_apply_target();
-    g_app.display_dirty = true;
+    if (!h456_h6_position_lockable()) {
+        if (g_app.ball.enabled) {
+            (void) ball_balance_enable(false);
+            (void) ball_balance_get_status(&g_app.ball);
+            g_app.display_dirty = true;
+        }
+        return;
+    }
+    if ((h456_set_h6_target_from_position(false) == ML_STATUS_OK) &&
+        (h456_app_abs(g_app.target_cm - previous_target_cm) >=
+         H456_APP_H6_TARGET_UPDATE_EPS_CM)) {
+        g_app.display_dirty = true;
+    }
+    if (!g_app.ball.enabled && !g_app.ball.breakaway_fault) {
+        (void) ball_balance_enable(true);
+        (void) ball_balance_get_status(&g_app.ball);
+        g_app.display_dirty = true;
+    }
 }
 
 static void h456_update_ball_settle(uint32_t now_ms)
 {
-    bool stable = g_app.ball.vision_ready && g_app.ball.enabled &&
-        (g_app.ball.state == BALL_BALANCE_ACTIVE) &&
-        (h456_app_abs(g_app.ball.error_cm) <=
-         H456_APP_BALL_READY_ERROR_CM) &&
-        (h456_app_abs(g_app.ball.velocity_cm_per_s) <=
-         H456_APP_BALL_READY_SPEED_CM_S);
+    bool stable;
+
+    if (g_app.mode == H456_MODE_6) {
+        stable = g_app.ball.vision_ready && g_app.ball.enabled &&
+            (g_app.ball.state == BALL_BALANCE_ACTIVE) &&
+            h456_h6_position_lockable() &&
+            (h456_app_abs(g_app.ball.velocity_cm_per_s) <=
+             H456_APP_BALL_READY_SPEED_CM_S);
+    } else {
+        stable = g_app.ball.vision_ready && g_app.ball.enabled &&
+            (g_app.ball.state == BALL_BALANCE_ACTIVE) &&
+            (h456_app_abs(g_app.ball.error_cm) <=
+             H456_APP_BALL_READY_ERROR_CM) &&
+            (h456_app_abs(g_app.ball.velocity_cm_per_s) <=
+             H456_APP_BALL_READY_SPEED_CM_S);
+    }
 
     if (!stable) {
         h456_reset_settle();
@@ -492,6 +711,9 @@ static void h456_update_ball_settle(uint32_t now_ms)
     }
     if ((now_ms - g_app.ball_settle_start_ms) >=
         H456_APP_BALL_READY_SETTLE_MS) {
+        if (g_app.state != H456_APP_READY) {
+            h456_disarm_start_key();
+        }
         g_app.ball_settled = true;
         g_app.state = H456_APP_READY;
     }
@@ -582,6 +804,8 @@ static void h456_start_recenter(h456_app_fault_t fault,
     chassis_emergency_stop();
     g_app.velocity_started = false;
     g_app.fault = fault;
+    h456_disarm_start_key();
+    h456_reset_cd_protection();
     h456_clear_launch_bias();
     (void) ball_balance_enable(false);
     (void) ball_balance_get_status(&g_app.ball);
@@ -595,6 +819,12 @@ static ml_status_t h456_start_run(chassis_status_t *status)
     float center_distance_mm;
     ml_status_t result;
 
+    if (g_app.mode == H456_MODE_6) {
+        result = h456_set_h6_target_from_position(false);
+        if (result != ML_STATUS_OK) {
+            return result;
+        }
+    }
     result = line_sensor_reassert_inputs();
     if (result != ML_STATUS_OK) {
         return result;
@@ -628,6 +858,7 @@ static ml_status_t h456_start_run(chassis_status_t *status)
     g_app.score_frozen = false;
     g_app.velocity_started = false;
     g_app.h4_heading_only_active = false;
+    h456_reset_cd_protection();
     result = h456_configure_line_control(g_app.mode);
     if (result != ML_STATUS_OK) {
         return result;
@@ -636,6 +867,7 @@ static ml_status_t h456_start_run(chassis_status_t *status)
         g_h456_mission_default_config.control_period_ms;
     h456_telemetry_session_start(g_app.mode, status->timestamp_ms);
     h456_start_launch_bias(status->timestamp_ms);
+    h456_disarm_start_key();
     g_app.state = H456_APP_RUNNING;
     return ML_STATUS_OK;
 }
@@ -725,8 +957,10 @@ static void h456_run_control(chassis_status_t *status)
     if (g_app.mission_output.finished) {
         chassis_stop();
         g_app.velocity_started = false;
+        h456_reset_cd_protection();
         h456_clear_launch_bias();
         h456_finish_telemetry(status);
+        h456_disarm_start_key();
         g_app.state = H456_APP_FINISHED;
         g_app.display_dirty = true;
         return;
@@ -749,9 +983,13 @@ static void h456_run_control(chassis_status_t *status)
         g_app.h4_heading_only_active = false;
     }
     request.heading_only = g_app.h4_heading_only_active;
+    h456_apply_cd_request_protection(&request);
     command_status = chassis_track_line_control_update_fused(
         &g_app.line_control, &g_app.last_line,
         &request, &g_app.line_output);
+    if (command_status == ML_STATUS_OK) {
+        h456_apply_cd_output_protection();
+    }
     if (command_status == ML_STATUS_OK) {
         if (!g_app.velocity_started) {
             command_status = chassis_set_velocity(
@@ -775,7 +1013,7 @@ ml_status_t h456_app_init(void)
     const char *failure_detail = "CHECK MODULES";
 
     memset(&g_app, 0, sizeof(g_app));
-    g_app.mode = H456_MODE_4;
+    g_app.mode = H456_MODE_6;
     chassis_key_init(&g_app.center_key);
     chassis_key_init(&g_app.up_key);
     chassis_key_init(&g_app.down_key);
@@ -819,9 +1057,6 @@ ml_status_t h456_app_init(void)
     }
     if (status == ML_STATUS_OK) {
         status = ball_balance_set_target_cm(0.0f);
-    }
-    if (status == ML_STATUS_OK) {
-        status = ball_balance_enable(true);
     }
     if (status != ML_STATUS_OK) {
         chassis_emergency_stop();
@@ -886,12 +1121,20 @@ void h456_app_poll(void)
          LINE_SENSOR_WHITE_STABLE_SAMPLES)) {
         g_app.state = H456_APP_SETUP;
         h456_require_key_release();
+        h456_disarm_start_key();
         g_app.display_dirty = true;
+    }
+
+    if ((g_app.state == H456_APP_CALIBRATING) ||
+        (g_app.state == H456_APP_SETUP) ||
+        (g_app.state == H456_APP_READY)) {
+        h456_update_h6_candidate_target();
     }
 
     if ((g_app.state == H456_APP_SETUP) ||
         (g_app.state == H456_APP_READY)) {
-        if (g_app.ball.vision_ready && !g_app.ball.enabled &&
+        if ((g_app.mode != H456_MODE_6) &&
+            g_app.ball.vision_ready && !g_app.ball.enabled &&
             !g_app.ball.breakaway_fault) {
             (void) ball_balance_enable(true);
             (void) ball_balance_get_status(&g_app.ball);
@@ -902,14 +1145,12 @@ void h456_app_poll(void)
         if (chassis_key_take_press(&g_app.down_key)) {
             h456_select_next_mode(false);
         }
-        if (chassis_key_take_press(&g_app.left_key)) {
-            h456_adjust_h6_target(-H456_APP_H6_TARGET_STEP_CM);
-        }
-        if (chassis_key_take_press(&g_app.right_key)) {
-            h456_adjust_h6_target(H456_APP_H6_TARGET_STEP_CM);
-        }
+        (void) chassis_key_take_press(&g_app.left_key);
+        (void) chassis_key_take_press(&g_app.right_key);
         h456_update_ball_settle(status.timestamp_ms);
-        if ((g_app.state == H456_APP_READY) && center_press) {
+        h456_update_start_key_arming();
+        if ((g_app.state == H456_APP_READY) &&
+            g_app.start_key_armed && center_press) {
             command_status = h456_start_run(&status);
             if (command_status != ML_STATUS_OK) {
                 h456_start_recenter(H456_APP_FAULT_CHASSIS, &status);
@@ -920,6 +1161,7 @@ void h456_app_poll(void)
     } else if ((g_app.state == H456_APP_FINISHED) && center_press) {
         h456_clear_launch_bias();
         (void) ball_balance_enable(false);
+        h456_disarm_start_key();
         g_app.state = H456_APP_RECENTERING;
         g_app.display_dirty = true;
     }

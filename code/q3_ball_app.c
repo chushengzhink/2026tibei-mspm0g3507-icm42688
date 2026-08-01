@@ -18,6 +18,7 @@
 #define Q3_OLED_REDRAW_DELAY_MS       (20U)
 #define Q3_OLED_TEST_HOLD_MS          (400U)
 #define Q3_OLED_DISPLAY_PERIOD_MS     (100U)
+#define Q3_OLED_WAIT_DISPLAY_PERIOD_MS (500U)
 #define Q3_OLED_DIAG_REPEAT_MS        (2000U)
 #define Q3_OLED_BLINK_PERIOD_MS       (250U)
 
@@ -40,23 +41,40 @@ typedef struct {
     bool oled_line_valid[OLED_TEXT_LINE_COUNT];
     char oled_line[OLED_TEXT_LINE_COUNT][OLED_TEXT_COLUMN_COUNT + 1U];
     bool led_ready;
+    bool uart0_ready;
     bool map_exported;
     bool telemetry_finished;
+    bool telemetry_recorded;
+    bool core_failed;
     uint8_t oled_attempts;
+    q3_core_init_stage_t core_stage;
+    ml_status_t core_error;
+    ml_status_t uart0_error;
     uint32_t oled_error;
     uint32_t oled_last_retry_ms;
     uint32_t oled_last_display_ms;
     uint32_t oled_last_diag_ms;
     uint32_t oled_last_diag_error;
     uint32_t led_last_toggle_ms;
+    uint32_t telemetry_last_record_ms;
+    q3_vision_diag_t wait_oled_diag;
+    uint8_t wait_oled_streak;
+    bool wait_oled_have_diag;
 } q3_app_context_t;
 
 static q3_app_context_t g_app;
 
+static void q3_send_byte(uint8_t byte)
+{
+    if (g_app.uart0_ready) {
+        (void) uart_sendbyte(Q3_TELEMETRY_UART, byte);
+    }
+}
+
 static void q3_send_text(const char *text)
 {
     while (*text != '\0') {
-        (void) uart_sendbyte(Q3_TELEMETRY_UART, (uint8_t) *text++);
+        q3_send_byte((uint8_t) *text++);
     }
 }
 
@@ -70,8 +88,7 @@ static void q3_send_u32(uint32_t value)
         value /= 10U;
     } while ((value != 0U) && (count < sizeof(digits)));
     while (count > 0U) {
-        (void) uart_sendbyte(Q3_TELEMETRY_UART,
-            (uint8_t) digits[--count]);
+        q3_send_byte((uint8_t) digits[--count]);
     }
 }
 
@@ -81,16 +98,15 @@ static void q3_send_fixed(int32_t scaled, uint32_t divisor)
     uint32_t place;
 
     if (scaled < 0) {
-        (void) uart_sendbyte(Q3_TELEMETRY_UART, (uint8_t) '-');
+        q3_send_byte((uint8_t) '-');
         magnitude = (uint32_t) (-(scaled + 1)) + 1U;
     } else {
         magnitude = (uint32_t) scaled;
     }
     q3_send_u32(magnitude / divisor);
-    (void) uart_sendbyte(Q3_TELEMETRY_UART, (uint8_t) '.');
+    q3_send_byte((uint8_t) '.');
     for (place = divisor / 10U; place > 0U; place /= 10U) {
-        (void) uart_sendbyte(Q3_TELEMETRY_UART,
-            (uint8_t) ('0' + ((magnitude / place) % 10U)));
+        q3_send_byte((uint8_t) ('0' + ((magnitude / place) % 10U)));
     }
 }
 
@@ -202,6 +218,37 @@ static const char *q3_state_uart_text(q3_state_t state)
     }
 }
 
+static const char *q3_state_name(q3_state_t state)
+{
+    switch (state) {
+        case Q3_STATE_WAIT_VISION: return "WAIT_VISION";
+        case Q3_STATE_BOOT_SETTLE: return "BOOT_SETTLE";
+        case Q3_STATE_BOOT_PROBE_PLUS: return "BOOT_PROBE_PLUS";
+        case Q3_STATE_BOOT_RETURN_PLUS: return "BOOT_RETURN_PLUS";
+        case Q3_STATE_BOOT_PROBE_MINUS: return "BOOT_PROBE_MINUS";
+        case Q3_STATE_BOOT_RECENTER: return "BOOT_RECENTER";
+        case Q3_STATE_READY: return "READY";
+        case Q3_STATE_PLUS_DRIVE: return "PLUS_DRIVE";
+        case Q3_STATE_PLUS_BRAKE: return "PLUS_BRAKE";
+        case Q3_STATE_REVERSAL: return "REVERSAL";
+        case Q3_STATE_MINUS_DRIVE: return "MINUS_DRIVE";
+        case Q3_STATE_MINUS_BRAKE: return "MINUS_BRAKE";
+        case Q3_STATE_FINAL_CAPTURE: return "FINAL_CAPTURE";
+        case Q3_STATE_COMPLETE: return "COMPLETE";
+        case Q3_STATE_MAP_ARMED: return "MAP_ARMED";
+        case Q3_STATE_MAP_TO_PLUS: return "MAP_TO_PLUS";
+        case Q3_STATE_MAP_TO_MINUS: return "MAP_TO_MINUS";
+        case Q3_STATE_MAP_RETURN_CENTER: return "MAP_RETURN_CENTER";
+        case Q3_STATE_MAP_COMPLETE: return "MAP_COMPLETE";
+        case Q3_STATE_TIMEOUT: return "TIMEOUT";
+        case Q3_STATE_ABORTED: return "ABORTED";
+        case Q3_STATE_VISION_FAULT: return "VISION_FAULT";
+        case Q3_STATE_PROFILE_FAULT: return "PROFILE_FAULT";
+        case Q3_STATE_CALIBRATION_FAULT: return "CALIBRATION_FAULT";
+        default: return "UNKNOWN";
+    }
+}
+
 static const char *q3_oled_header(q3_state_t state)
 {
     switch (state) {
@@ -233,6 +280,59 @@ static const char *q3_oled_header(q3_state_t state)
     }
 }
 
+static const char *q3_cal_fault_reason_text(q3_cal_fault_reason_t reason)
+{
+    switch (reason) {
+        case Q3_CAL_FAULT_BOOT_TIMEOUT: return "BOOT_TIMEOUT";
+        case Q3_CAL_FAULT_POSITION_LIMIT: return "POSITION_LIMIT";
+        case Q3_CAL_FAULT_PLUS_DIRECTION: return "PLUS_DIRECTION";
+        case Q3_CAL_FAULT_MINUS_DIRECTION: return "MINUS_DIRECTION";
+        case Q3_CAL_FAULT_RECENTER_TIMEOUT: return "RECENTER_TIMEOUT";
+        case Q3_CAL_FAULT_NONE:
+        default: return "NONE";
+    }
+}
+
+static const char *q3_cal_fault_oled_text(q3_cal_fault_reason_t reason)
+{
+    switch (reason) {
+        case Q3_CAL_FAULT_BOOT_TIMEOUT: return "WHY TIMEOUT";
+        case Q3_CAL_FAULT_POSITION_LIMIT: return "WHY POS LIMIT";
+        case Q3_CAL_FAULT_PLUS_DIRECTION: return "WHY PLUS DIR";
+        case Q3_CAL_FAULT_MINUS_DIRECTION: return "WHY MINUS DIR";
+        case Q3_CAL_FAULT_RECENTER_TIMEOUT: return "WHY RECENTER";
+        case Q3_CAL_FAULT_NONE:
+        default: return "WHY UNKNOWN";
+    }
+}
+
+static const char *q3_vision_diag_text(q3_vision_diag_t diag)
+{
+    switch (diag) {
+        case Q3_VISION_DIAG_NO_RX: return "NO_RX";
+        case Q3_VISION_DIAG_LOST: return "LOST";
+        case Q3_VISION_DIAG_LOW_SCORE: return "LOW_SCORE";
+        case Q3_VISION_DIAG_SLOW_FRAME: return "SLOW_FRAME";
+        case Q3_VISION_DIAG_WAIT_STREAK: return "WAIT_STREAK";
+        case Q3_VISION_DIAG_MOVE_TO_O: return "MOVE_TO_O";
+        case Q3_VISION_DIAG_OK: return "OK";
+        default: return "UNKNOWN";
+    }
+}
+
+static const char *q3_core_stage_text(q3_core_init_stage_t stage)
+{
+    switch (stage) {
+        case Q3_CORE_INIT_START: return "START";
+        case Q3_CORE_INIT_UART2: return "UART2";
+        case Q3_CORE_INIT_SERVO: return "SERVO";
+        case Q3_CORE_INIT_TIMG6: return "TIMG6";
+        case Q3_CORE_INIT_SAFE: return "SAFE";
+        case Q3_CORE_INIT_COMPLETE: return "COMPLETE";
+        default: return "CORE";
+    }
+}
+
 static void q3_line_clear(char line[OLED_TEXT_COLUMN_COUNT + 1U])
 {
     memset(line, ' ', OLED_TEXT_COLUMN_COUNT);
@@ -260,6 +360,24 @@ static void q3_line_u32(char line[OLED_TEXT_COLUMN_COUNT + 1U],
     }
 }
 
+static void q3_line_i32(char line[OLED_TEXT_COLUMN_COUNT + 1U],
+    uint8_t column, int32_t value, uint8_t width)
+{
+    uint32_t magnitude;
+
+    if (column >= OLED_TEXT_COLUMN_COUNT) {
+        return;
+    }
+    if (value < 0) {
+        line[column++] = '-';
+        magnitude = (uint32_t) -value;
+    } else {
+        line[column++] = '+';
+        magnitude = (uint32_t) value;
+    }
+    q3_line_u32(line, column, magnitude, width);
+}
+
 static void q3_line_signed_tenths(
     char line[OLED_TEXT_COLUMN_COUNT + 1U], uint8_t column,
     float value)
@@ -280,6 +398,62 @@ static void q3_line_signed_tenths(
     line[column + 4U] = (char) ('0' + (magnitude % 10U));
 }
 
+static void q3_render_wait_vision_page(const q3_ball_status_t *status,
+    char lines[OLED_TEXT_LINE_COUNT][OLED_TEXT_COLUMN_COUNT + 1U])
+{
+    uint32_t score_milli = (uint32_t) q3_scaled(status->raw_score,
+        1000.0f);
+    uint32_t raw_x = (status->raw_center_x_px < 0) ?
+        (uint32_t) -status->raw_center_x_px :
+        (uint32_t) status->raw_center_x_px;
+
+    if (status->vision_diag == Q3_VISION_DIAG_NO_RX) {
+        q3_line_text(lines[2], 0U, "NO VISION RX");
+        q3_line_text(lines[3], 0U, "O");
+        q3_line_u32(lines[3], 1U, status->valid_frames, 3U);
+        q3_line_text(lines[3], 5U, "C");
+        q3_line_u32(lines[3], 6U, status->crc_errors, 2U);
+        q3_line_text(lines[3], 9U, "F");
+        q3_line_u32(lines[3], 10U, status->format_errors, 2U);
+        q3_line_text(lines[3], 13U, "L");
+        q3_line_u32(lines[3], 14U, status->length_errors, 2U);
+    } else if (status->vision_diag == Q3_VISION_DIAG_LOST) {
+        q3_line_text(lines[2], 0U, "BALL LOST");
+        q3_line_text(lines[3], 0U, "RAWX");
+        q3_line_i32(lines[3], 4U, status->raw_center_x_px, 3U);
+        q3_line_text(lines[3], 9U, "OK");
+        q3_line_u32(lines[3], 11U, status->valid_frames, 3U);
+    } else if (status->vision_diag == Q3_VISION_DIAG_LOW_SCORE) {
+        q3_line_text(lines[2], 0U, "LOW SCORE");
+        q3_line_text(lines[3], 0U, "S");
+        q3_line_u32(lines[3], 1U, score_milli, 3U);
+        q3_line_text(lines[3], 5U, "RAW");
+        q3_line_u32(lines[3], 8U, raw_x, 4U);
+    } else if (status->vision_diag == Q3_VISION_DIAG_SLOW_FRAME) {
+        q3_line_text(lines[2], 0U, "SLOW FRAME");
+        q3_line_text(lines[3], 0U, "DT");
+        q3_line_u32(lines[3], 2U,
+            status->vision_last_diag_interval_ms, 3U);
+        q3_line_text(lines[3], 6U, "V");
+        q3_line_u32(lines[3], 7U, status->vision_valid_streak, 1U);
+        q3_line_text(lines[3], 8U, "/3");
+    } else if (status->vision_diag == Q3_VISION_DIAG_WAIT_STREAK) {
+        q3_line_text(lines[2], 0U, "VISION ");
+        q3_line_u32(lines[2], 7U, status->vision_valid_streak, 1U);
+        q3_line_text(lines[2], 8U, "/3");
+        q3_line_text(lines[3], 0U, "S");
+        q3_line_u32(lines[3], 1U, score_milli, 3U);
+        q3_line_text(lines[3], 5U, "RAW");
+        q3_line_u32(lines[3], 8U, raw_x, 4U);
+    } else if (status->vision_diag == Q3_VISION_DIAG_MOVE_TO_O) {
+        q3_line_text(lines[2], 0U, "MOVE TO O");
+        q3_line_text(lines[3], 0U, "LIMIT +-0.8CM");
+    } else {
+        q3_line_text(lines[2], 0U, "VISION OK");
+        q3_line_text(lines[3], 0U, "AUTO CAL WAIT");
+    }
+}
+
 static void q3_render_page(const q3_ball_status_t *status,
     char lines[OLED_TEXT_LINE_COUNT][OLED_TEXT_COLUMN_COUNT + 1U])
 {
@@ -297,6 +471,12 @@ static void q3_render_page(const q3_ball_status_t *status,
     if (status->state == Q3_STATE_MAP_COMPLETE) {
         q3_line_text(lines[2], 0U, "MAP 13 PT READY");
         q3_line_text(lines[3], 0U, "L=EXPORT MAP");
+    } else if (status->state == Q3_STATE_WAIT_VISION) {
+        q3_render_wait_vision_page(status, lines);
+    } else if (status->state == Q3_STATE_CALIBRATION_FAULT) {
+        q3_line_text(lines[2], 0U,
+            q3_cal_fault_oled_text(status->cal_fault_reason));
+        q3_line_text(lines[3], 0U, "CHECK UART0 LOG");
     } else if (q3_state_is_formal_motion(status->state) ||
                q3_state_is_neutral_terminal(status->state)) {
         q3_line_text(lines[2], 0U, "T");
@@ -405,6 +585,59 @@ static ml_status_t q3_oled_show_boot(void)
     return ML_STATUS_OK;
 }
 
+static ml_status_t q3_oled_show_core_failure(void)
+{
+    char lines[OLED_TEXT_LINE_COUNT][OLED_TEXT_COLUMN_COUNT + 1U];
+    uint8_t line;
+
+    if (!g_app.oled_ready) {
+        return ML_STATUS_NOT_INITIALIZED;
+    }
+    for (line = 0U; line < OLED_TEXT_LINE_COUNT; ++line) {
+        q3_line_clear(lines[line]);
+    }
+    q3_line_text(lines[0], 0U, "Q3 CORE FAIL");
+    q3_line_text(lines[1], 0U, "STAGE ");
+    q3_line_text(lines[1], 6U, q3_core_stage_text(g_app.core_stage));
+    q3_line_text(lines[2], 0U, "ERR ");
+    q3_line_u32(lines[2], 4U, (uint32_t) g_app.core_error, 2U);
+    q3_line_text(lines[3], 0U, "CHECK UART0 LOG");
+    q3_oled_invalidate();
+    for (line = 0U; line < OLED_TEXT_LINE_COUNT; ++line) {
+        if (q3_oled_write_line(line, lines[line]) != ML_STATUS_OK) {
+            return (ml_status_t) g_app.oled_error;
+        }
+    }
+    g_app.oled_dirty = false;
+    return ML_STATUS_OK;
+}
+
+static ml_status_t q3_oled_show_core_progress(q3_core_init_stage_t stage)
+{
+    char line[OLED_TEXT_COLUMN_COUNT + 1U];
+
+    if (!g_app.oled_ready) {
+        return ML_STATUS_NOT_INITIALIZED;
+    }
+    q3_line_clear(line);
+    if (stage == Q3_CORE_INIT_COMPLETE) {
+        q3_line_text(line, 0U, "CORE OK");
+    } else {
+        q3_line_text(line, 0U, "CORE ");
+        q3_line_text(line, 5U, q3_core_stage_text(stage));
+    }
+    return q3_oled_write_line(3U, line);
+}
+
+static void q3_uart0_try_init(void)
+{
+    ml_status_t result;
+
+    result = q3_telemetry_uart0_init();
+    g_app.uart0_ready = (result == ML_STATUS_OK);
+    g_app.uart0_error = result;
+}
+
 static void q3_oled_log_failure(uint32_t now_ms, bool force)
 {
     if (!force && (g_app.oled_last_diag_error == g_app.oled_error) &&
@@ -469,6 +702,7 @@ static void q3_oled_initialize(void)
 static void q3_oled_service(const q3_ball_status_t *status)
 {
     bool motion = q3_state_is_motion(status->state);
+    bool due;
 
     if (!g_app.oled_ready && !motion &&
         ((status->uptime_ms - g_app.oled_last_retry_ms) >=
@@ -477,10 +711,26 @@ static void q3_oled_service(const q3_ball_status_t *status)
         (void) q3_oled_init_once(status->uptime_ms, true);
         q3_oled_invalidate();
     }
-    if (g_app.oled_ready && !motion &&
-        (g_app.oled_dirty ||
-         ((status->uptime_ms - g_app.oled_last_display_ms) >=
-          Q3_OLED_DISPLAY_PERIOD_MS))) {
+    if (!g_app.oled_ready || motion) {
+        return;
+    }
+    if (status->state == Q3_STATE_WAIT_VISION) {
+        due = g_app.oled_dirty ||
+            !g_app.wait_oled_have_diag ||
+            (g_app.wait_oled_diag != status->vision_diag) ||
+            (g_app.wait_oled_streak != status->vision_valid_streak) ||
+            ((status->uptime_ms - g_app.oled_last_display_ms) >=
+             Q3_OLED_WAIT_DISPLAY_PERIOD_MS);
+        if (due && (q3_oled_show_page(status, false) == ML_STATUS_OK)) {
+            g_app.wait_oled_diag = status->vision_diag;
+            g_app.wait_oled_streak = status->vision_valid_streak;
+            g_app.wait_oled_have_diag = true;
+        }
+        return;
+    }
+    if (g_app.oled_dirty ||
+        ((status->uptime_ms - g_app.oled_last_display_ms) >=
+         Q3_OLED_DISPLAY_PERIOD_MS)) {
         (void) q3_oled_show_page(status, false);
     }
 }
@@ -501,16 +751,71 @@ static void q3_led_service(const q3_ball_status_t *status)
     }
 }
 
+static void q3_record_formal_telemetry(const q3_ball_status_t *status,
+    bool force)
+{
+    if (!q3_telemetry_session_active()) {
+        return;
+    }
+    if (!force && g_app.telemetry_recorded &&
+        ((status->uptime_ms - g_app.telemetry_last_record_ms) <
+         Q3_CONTROL_PERIOD_MS)) {
+        return;
+    }
+    if (q3_telemetry_record(status) == ML_STATUS_OK) {
+        g_app.telemetry_recorded = true;
+        g_app.telemetry_last_record_ms = status->uptime_ms;
+    }
+}
+
 static void q3_report_state(const q3_ball_status_t *status)
 {
     if (!g_app.have_state || (g_app.last_state != status->state)) {
-        q3_send_text(q3_state_uart_text(status->state));
+        if (status->state == Q3_STATE_CALIBRATION_FAULT) {
+            q3_send_text("Q3 CAL FAULT REASON=");
+            q3_send_text(q3_cal_fault_reason_text(
+                status->cal_fault_reason));
+            q3_send_text(" FROM=");
+            q3_send_text(q3_state_name(status->cal_fault_state));
+            q3_send_text("\r\n");
+        } else {
+            q3_send_text(q3_state_uart_text(status->state));
+        }
         g_app.last_state = status->state;
         g_app.have_state = true;
         g_app.oled_dirty = true;
         if (g_app.oled_ready && q3_state_is_motion(status->state)) {
             (void) q3_oled_show_page(status, true);
         }
+    }
+}
+
+static void q3_report_core_failure(q3_core_init_stage_t stage,
+    ml_status_t error)
+{
+    q3_send_text("Q3 CORE FAIL STAGE=");
+    q3_send_text(q3_core_stage_text(stage));
+    q3_send_text(" ERR=");
+    q3_send_u32((uint32_t) error);
+    q3_send_text("\r\n");
+}
+
+static void q3_core_progress(q3_core_init_stage_t stage, void *context)
+{
+    (void) context;
+    g_app.core_stage = stage;
+    (void) q3_oled_show_core_progress(stage);
+}
+
+static void q3_oled_force_status_page(const q3_ball_status_t *status)
+{
+    if (!g_app.oled_ready) {
+        g_app.oled_dirty = true;
+        return;
+    }
+    q3_oled_invalidate();
+    if (q3_oled_show_page(status, false) != ML_STATUS_OK) {
+        g_app.oled_dirty = true;
     }
 }
 
@@ -552,9 +857,69 @@ static void q3_export_map(void)
     q3_send_text("Q3_MAP_END\r\n");
 }
 
+static void q3_send_signed_fixed(float value, float scale,
+    uint32_t divisor)
+{
+    if (value >= 0.0f) {
+        q3_send_text("+");
+    }
+    q3_send_fixed(q3_scaled(value, scale), divisor);
+}
+
+static void q3_report_vision_status(const q3_ball_status_t *status)
+{
+    q3_send_text("Q3 VISION state=");
+    q3_send_text(q3_state_name(status->state));
+    q3_send_text(" x=");
+    q3_send_signed_fixed(status->position_cm, 100.0f, 100U);
+    q3_send_text(" score=");
+    q3_send_fixed(q3_scaled(status->raw_score, 1000.0f), 1000U);
+    q3_send_text(" ok=");
+    q3_send_u32(status->valid_frames);
+    q3_send_text(" streak=");
+    q3_send_u32(status->vision_valid_streak);
+    q3_send_text(" age=");
+    q3_send_u32(status->vision_age_ms);
+    q3_send_text(" raw=");
+    if (status->raw_center_x_px >= 0) {
+        q3_send_text("+");
+    } else {
+        q3_send_text("-");
+    }
+    q3_send_u32((status->raw_center_x_px < 0) ?
+        (uint32_t) -status->raw_center_x_px :
+        (uint32_t) status->raw_center_x_px);
+    q3_send_text(",");
+    if (status->raw_center_y_px >= 0) {
+        q3_send_text("+");
+    } else {
+        q3_send_text("-");
+    }
+    q3_send_u32((status->raw_center_y_px < 0) ?
+        (uint32_t) -status->raw_center_y_px :
+        (uint32_t) status->raw_center_y_px);
+    q3_send_text(" crc=");
+    q3_send_u32(status->crc_errors);
+    q3_send_text(" fmt=");
+    q3_send_u32(status->format_errors);
+    q3_send_text(" len=");
+    q3_send_u32(status->length_errors);
+    q3_send_text(" ovf=");
+    q3_send_u32(status->uart_overflows);
+    q3_send_text(" dt=");
+    q3_send_u32(status->vision_last_diag_interval_ms);
+    q3_send_text(" diag=");
+    q3_send_text(q3_vision_diag_text(status->vision_diag));
+    q3_send_text("\r\n");
+}
+
 static bool q3_handle_idle_command(uint8_t byte,
     const q3_ball_status_t *status)
 {
+    if ((byte == (uint8_t) 'V') || (byte == (uint8_t) 'v')) {
+        q3_report_vision_status(status);
+        return true;
+    }
     if ((byte == (uint8_t) 'K') || (byte == (uint8_t) 'k')) {
         if (q3_ball_arm_map_calibration() == ML_STATUS_OK) {
             q3_send_text("MAP ARMED PRESS PB24\r\n");
@@ -589,6 +954,7 @@ static bool q3_handle_idle_command(uint8_t byte,
 ml_status_t q3_ball_app_init(void)
 {
     ml_status_t result;
+    q3_ball_status_t status;
 
     memset(&g_app, 0, sizeof(g_app));
     result = board_resource_claim(
@@ -605,27 +971,32 @@ ml_status_t q3_ball_app_init(void)
     }
     q3_key_init(&g_app.center_key, q3_center_pressed());
     g_app.led_ready = (board_led_init() == ML_STATUS_OK);
-    result = q3_telemetry_init();
-    if (result != ML_STATUS_OK) {
-        return result;
-    }
-    q3_send_text("Q3 TERRAIN BOOT\r\n");
-#ifndef TEST_Q3_APP_PRELUDE_H
-    NVIC_DisableIRQ(UART0_INT_IRQn);
-#endif
+    g_app.uart0_ready = false;
+    g_app.uart0_error = ML_STATUS_NOT_INITIALIZED;
+    q3_telemetry_storage_init();
     q3_oled_initialize();
     if (g_app.oled_ready) {
         delay_ms(Q3_OLED_TEST_HOLD_MS);
     }
-#ifndef TEST_Q3_APP_PRELUDE_H
-    NVIC_ClearPendingIRQ(UART0_INT_IRQn);
-    NVIC_EnableIRQ(UART0_INT_IRQn);
-#endif
-    result = q3_ball_init();
+    g_app.core_stage = Q3_CORE_INIT_START;
+    (void) q3_oled_show_core_progress(Q3_CORE_INIT_START);
+    result = q3_ball_init_with_progress(q3_core_progress, 0);
     if (result != ML_STATUS_OK) {
-        q3_send_text("Q3 CORE FAIL\r\n");
-        return result;
+        g_app.core_failed = true;
+        g_app.core_stage = q3_ball_get_init_stage();
+        g_app.core_error = result;
+        q3_uart0_try_init();
+        q3_send_text("Q3 TERRAIN BOOT\r\n");
+        q3_report_core_failure(g_app.core_stage, result);
+        (void) q3_oled_show_core_failure();
+        g_app.initialized = true;
+        return ML_STATUS_OK;
     }
+    if (q3_ball_get_status(&status) == ML_STATUS_OK) {
+        q3_oled_force_status_page(&status);
+    }
+    q3_uart0_try_init();
+    q3_send_text("Q3 TERRAIN BOOT\r\n");
     q3_send_text("Q3 CORE OK\r\n");
     g_app.initialized = true;
     return ML_STATUS_OK;
@@ -638,6 +1009,9 @@ void q3_ball_app_poll(void)
     uint8_t byte;
 
     if (!g_app.initialized) {
+        return;
+    }
+    if (g_app.core_failed) {
         return;
     }
     q3_ball_process();
@@ -675,24 +1049,31 @@ void q3_ball_app_poll(void)
     if ((status.state == Q3_STATE_PLUS_DRIVE) &&
         !q3_telemetry_session_active() && !g_app.telemetry_finished) {
         q3_telemetry_session_start();
+        g_app.telemetry_recorded = false;
+        g_app.telemetry_last_record_ms = 0U;
+        q3_record_formal_telemetry(&status, true);
     }
     if (q3_telemetry_session_active()) {
-        (void) q3_telemetry_record(&status);
         if ((status.state == Q3_STATE_COMPLETE) ||
             q3_state_is_neutral_terminal(status.state)) {
+            q3_record_formal_telemetry(&status, true);
             q3_telemetry_session_finish(&status);
             g_app.telemetry_finished = true;
             g_app.oled_dirty = true;
+        } else {
+            q3_record_formal_telemetry(&status, false);
         }
     }
-    if ((status.state == Q3_STATE_MAP_COMPLETE) &&
+    if (g_app.uart0_ready &&
+        (status.state == Q3_STATE_MAP_COMPLETE) &&
         !g_app.map_exported) {
         q3_export_map();
         g_app.map_exported = true;
         g_app.oled_dirty = true;
     }
 
-    while (uart_try_read(Q3_TELEMETRY_UART, &byte) == ML_STATUS_OK) {
+    while (g_app.uart0_ready &&
+        (uart_try_read(Q3_TELEMETRY_UART, &byte) == ML_STATUS_OK)) {
         bool export_allowed;
 
         if (q3_handle_idle_command(byte, &status)) {

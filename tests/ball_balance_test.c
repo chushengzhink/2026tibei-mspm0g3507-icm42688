@@ -236,7 +236,10 @@ static void test_start_gate_timeout_and_abort(void)
 
     reset_controller();
     assert(ball_balance_start_pm5_sequence() == ML_STATUS_BUSY);
-    assert(ball_balance_set_target_cm(12.0f) == ML_STATUS_INVALID_ARGUMENT);
+    assert(ball_balance_set_target_cm(12.5f) == ML_STATUS_OK);
+    assert(ball_balance_set_target_cm(-12.5f) == ML_STATUS_OK);
+    assert(ball_balance_set_target_cm(12.6f) == ML_STATUS_INVALID_ARGUMENT);
+    assert(ball_balance_set_target_cm(-12.6f) == ML_STATUS_INVALID_ARGUMENT);
     capture_ms = make_vision_ready();
     assert(ball_balance_start_pm5_sequence() == ML_STATUS_OK);
     assert(ball_balance_start_pm5_sequence() == ML_STATUS_BUSY);

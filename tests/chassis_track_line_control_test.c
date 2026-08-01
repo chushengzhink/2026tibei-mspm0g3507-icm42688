@@ -1034,6 +1034,39 @@ static void test_line_only_curve_exit_speed_scaling(void)
     }
 }
 
+static void test_line_only_curve_exit_fade_window(void)
+{
+    chassis_track_line_control_config_t config =
+        g_chassis_track_line_control_default_config;
+    chassis_track_line_control_t control = {0};
+    chassis_track_line_control_output_t output;
+    line_sample_t outer_left = sample_for(0x01U);
+    line_sample_t centered = sample_for(0x06U);
+    float first_bias;
+    float second_bias;
+    uint8_t cycle;
+
+    config.curve_exit_fade_ms = 120U;
+    (void) chassis_track_line_control_init(&control, &config);
+    (void) chassis_track_line_control_update(&control, &outer_left,
+        350.0f, 0.0f, &output);
+    first_bias = output.final_steering_bias_mm_s;
+    check(first_bias > 100.0f && first_bias <= 120.0f,
+        "curve exit starts from the outer-left steering bias");
+    (void) chassis_track_line_control_update(&control, &centered,
+        350.0f, 0.0f, &output);
+    second_bias = output.final_steering_bias_mm_s;
+    check(second_bias > 0.0f && second_bias <= first_bias,
+        "first centered sample keeps a non-zero exit fade");
+    for (cycle = 0U; cycle < 5U; ++cycle) {
+        (void) chassis_track_line_control_update(&control, &centered,
+            350.0f, 0.0f, &output);
+    }
+    check(output.final_steering_bias_mm_s < second_bias &&
+        fabsf(output.final_steering_bias_mm_s) < 40.0f,
+        "curve exit fade decays toward straight line over the window");
+}
+
 static void test_h4_softened_config_passes_validation(void)
 {
     chassis_track_line_control_t control = {0};
@@ -1104,6 +1137,7 @@ int main(void)
     test_line_only_failed_curve_sequence_replay();
     test_line_only_curve_exit_confirmation();
     test_line_only_curve_exit_speed_scaling();
+    test_line_only_curve_exit_fade_window();
     test_h4_softened_config_passes_validation();
     test_invalid_input();
     if (g_failures == 0) {

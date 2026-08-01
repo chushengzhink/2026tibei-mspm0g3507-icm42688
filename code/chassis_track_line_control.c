@@ -29,6 +29,7 @@ const chassis_track_line_control_config_t
         600U,
         2U,
         5U,
+        0U,
         false
     };
 
@@ -53,6 +54,7 @@ const chassis_track_line_control_config_t
         600U,
         2U,
         5U,
+        0U,
         false
     };
 
@@ -295,6 +297,13 @@ static void line_control_clear_curve_memory(
     control->curve_exit_cycles = 0U;
 }
 
+static void line_control_clear_curve_exit_fade(
+    chassis_track_line_control_t *control)
+{
+    control->curve_exit_fade_remaining_ms = 0U;
+    control->curve_exit_fade_start_final_bias_mm_s = 0.0f;
+}
+
 static void line_control_accumulate_curve_travel(
     chassis_track_line_control_t *control, float linear_mm_s)
 {
@@ -503,6 +512,8 @@ void chassis_track_line_control_reset(
     control->pending_cycles = 0U;
     control->curve_exit_cycles = 0U;
     control->lost_ms = 0U;
+    line_control_clear_curve_exit_fade(control);
+    control->last_final_steering_bias_mm_s = 0.0f;
     control->has_valid_error = false;
 }
 
@@ -521,9 +532,12 @@ static ml_status_t line_control_update_internal(
     float half_track;
     float steering_bias_mm_s;
     float maximum_correction_mm_s;
+    float previous_final_steering_bias_mm_s;
+    uint8_t previous_valid_black_bits;
     bool line_valid;
     bool first_valid;
     bool outer_single_boost;
+    bool curve_exit_transition;
     bool suppress_reversal;
     ml_status_t status;
 
@@ -537,6 +551,9 @@ static ml_status_t line_control_update_internal(
         return ML_STATUS_INVALID_ARGUMENT;
     }
 
+    previous_final_steering_bias_mm_s =
+        control->last_final_steering_bias_mm_s;
+    previous_valid_black_bits = control->last_valid_black_bits;
     line_valid = line_control_centroid_error(
         sample->black_bits, &line_error);
     if (!line_valid) {
@@ -619,6 +636,39 @@ static ml_status_t line_control_update_internal(
             output->route_feedforward_bias_mm_s,
             maximum_correction_mm_s);
     }
+    curve_exit_transition = control->config.curve_exit_fade_ms > 0U &&
+        line_valid &&
+        !line_control_outer_single(sample->black_bits) &&
+        line_control_outer_single(previous_valid_black_bits);
+    if (line_valid && line_control_outer_single(sample->black_bits)) {
+        line_control_clear_curve_exit_fade(control);
+    } else if (curve_exit_transition &&
+               (control->curve_exit_fade_remaining_ms == 0U)) {
+        control->curve_exit_fade_start_final_bias_mm_s =
+            previous_final_steering_bias_mm_s;
+        control->curve_exit_fade_remaining_ms =
+            control->config.curve_exit_fade_ms;
+    }
+    if (control->curve_exit_fade_remaining_ms > 0U) {
+        float fade_ratio;
+        uint16_t remaining_ms = control->curve_exit_fade_remaining_ms;
+
+        fade_ratio = 1.0f - ((float) remaining_ms /
+            (float) control->config.curve_exit_fade_ms);
+        steering_bias_mm_s =
+            control->curve_exit_fade_start_final_bias_mm_s +
+            (steering_bias_mm_s -
+             control->curve_exit_fade_start_final_bias_mm_s) *
+            fade_ratio;
+        if (control->curve_exit_fade_remaining_ms >
+            control->config.control_period_ms) {
+            control->curve_exit_fade_remaining_ms = (uint16_t)
+                (control->curve_exit_fade_remaining_ms -
+                control->config.control_period_ms);
+        } else {
+            line_control_clear_curve_exit_fade(control);
+        }
+    }
     output->final_steering_bias_mm_s = steering_bias_mm_s;
     output->left_mm_s = linear_mm_s - steering_bias_mm_s;
     output->right_mm_s = linear_mm_s + steering_bias_mm_s;
@@ -632,6 +682,8 @@ static ml_status_t line_control_update_internal(
     output->line_state = state;
     output->line_valid = line_valid;
     output->recovering = !line_valid;
+    control->last_final_steering_bias_mm_s =
+        output->final_steering_bias_mm_s;
     return ML_STATUS_OK;
 }
 

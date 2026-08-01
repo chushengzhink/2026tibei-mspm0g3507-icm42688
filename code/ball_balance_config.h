@@ -136,8 +136,8 @@
 #define BALL_SEQUENCE_BREAKAWAY_SERVO_MAXIMUM_US (1700U)
 #define BALL_SEQUENCE_BRAKE_ENTER_MARGIN_CM_PER_S (0.5f)
 #define BALL_SEQUENCE_BRAKE_EXIT_MARGIN_CM_PER_S (0.1f)
-#define BALL_TARGET_MINIMUM_CM            (-11.5f)
-#define BALL_TARGET_MAXIMUM_CM            (11.5f)
+#define BALL_TARGET_MINIMUM_CM            (-12.5f)
+#define BALL_TARGET_MAXIMUM_CM            (12.5f)
 
 #define BALL_SEQUENCE_PLUS_CM             (5.0f)
 #define BALL_SEQUENCE_MINUS_CM            (-5.0f)
