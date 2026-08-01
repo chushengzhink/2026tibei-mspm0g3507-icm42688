@@ -803,15 +803,76 @@ static void test_fast_final_entry_latches_final_capture(void)
             ((status.velocity_cm_per_s > Q3_FINAL_CAPTURE_ENTRY_SPEED_CM_S) ||
              (status.velocity_cm_per_s < -Q3_FINAL_CAPTURE_ENTRY_SPEED_CM_S))) {
             saw_fast_band_entry = true;
-            assert(status.state == Q3_STATE_FINAL_CAPTURE);
+            advance_ms(Q3_CONTROL_PERIOD_MS);
+            assert(q3_ball_get_status(&status) == ML_STATUS_OK);
+            assert((status.state == Q3_STATE_FINAL_CAPTURE) ||
+                (status.state == Q3_STATE_MINUS_BRAKE));
             assert(status.final_capture_latched);
             assert(status.target_cm == Q3_FINAL_HOLD_TARGET_CM);
             assert(status.velocity_cm_per_s < 0.0f);
             assert(status.control_output_us > 0.0f);
+            assert(status.brake_active);
             break;
         }
     }
     assert(saw_fast_band_entry);
+}
+
+static void test_minus_high_speed_predicted_stop_brakes_early(void)
+{
+    q3_ball_status_t status;
+    uint32_t capture_ms = start_and_reach_minus_drive();
+    const float positions[] = {
+        3.20f, 3.05f, 2.90f, 2.75f, 2.60f, 2.45f, 2.30f,
+        2.15f, 2.00f, 1.85f, 1.70f, 1.55f, 1.40f, 1.25f,
+        1.10f, 0.95f, 0.80f, 0.65f, 0.50f, 0.35f, 0.20f,
+        0.05f, -0.10f, -0.25f, -0.40f, -0.55f, -0.70f, -0.85f
+    };
+    uint32_t i;
+    bool saw_early_brake = false;
+
+    for (i = 0U; i < (sizeof(positions) / sizeof(positions[0])); ++i) {
+        advance_frame(20U, &capture_ms, positions[i]);
+        advance_ms(Q3_CONTROL_PERIOD_MS);
+        assert(q3_ball_get_status(&status) == ML_STATUS_OK);
+        if ((status.velocity_cm_per_s <=
+                -Q3_MINUS_HIGH_SPEED_BRAKE_SPEED_CM_S) &&
+            (status.predicted_stop_cm <= Q3_MINUS_HIGH_SPEED_BRAKE_STOP_CM) &&
+            (status.predicted_stop_cm > Q3_MINUS_CONTROL_TARGET_CM)) {
+            saw_early_brake = true;
+            assert(status.state == Q3_STATE_MINUS_BRAKE);
+            assert(!status.final_capture_latched);
+            assert(fabsf(status.target_cm - Q3_MINUS_CONTROL_TARGET_CM) <
+                0.01f);
+            assert(status.position_cm > Q3_MINUS_VALID_MAXIMUM_CM);
+            assert(status.control_output_us > 0.0f);
+            assert(status.brake_active);
+            break;
+        }
+    }
+    assert(saw_early_brake);
+}
+
+static void test_minus_soft_hold_keeps_high_speed_braking(void)
+{
+    q3_ball_status_t status;
+    uint32_t capture_ms = start_and_reach_final_capture();
+
+    advance_frame(20U, &capture_ms, -5.45f);
+    assert(q3_ball_get_status(&status) == ML_STATUS_OK);
+    assert(status.state == Q3_STATE_FINAL_CAPTURE);
+    assert(status.velocity_cm_per_s <=
+        -Q3_MINUS_HIGH_SPEED_BRAKE_SPEED_CM_S);
+    assert(status.control_output_us > 80.0f);
+
+    advance_ms(Q3_VISION_SOFT_HOLD_MS + 20U);
+    assert(q3_ball_get_status(&status) == ML_STATUS_OK);
+    assert(status.state == Q3_STATE_FINAL_CAPTURE);
+    assert(status.vision_age_ms >= Q3_VISION_SOFT_HOLD_MS);
+    assert(status.vision_age_ms < Q3_VISION_TIMEOUT_MS);
+    assert(status.brake_active);
+    assert(status.control_output_us > 80.0f);
+    assert(status.servo_target_us < status.neutral_us);
 }
 
 static void test_final_capture_brakes_negative_crossing_in_place(void)
@@ -875,18 +936,26 @@ static void test_final_funnel_does_not_return_to_minus_drive(void)
     advance_frame(20U, &capture_ms, 0.40f);
     advance_frame(20U, &capture_ms, -1.20f);
     advance_frame(20U, &capture_ms, -2.40f);
+    advance_ms(Q3_CONTROL_PERIOD_MS);
     assert(q3_ball_get_status(&status) == ML_STATUS_OK);
-    assert(status.final_capture_latched);
-    assert(status.state == Q3_STATE_FINAL_CAPTURE);
-    assert(status.target_cm == Q3_FINAL_HOLD_TARGET_CM);
+    assert(status.state != Q3_STATE_MINUS_DRIVE);
+    assert((status.state == Q3_STATE_MINUS_BRAKE) ||
+        (status.state == Q3_STATE_FINAL_CAPTURE));
+    if (status.final_capture_latched) {
+        assert(fabsf(status.target_cm - Q3_FINAL_HOLD_TARGET_CM) < 0.01f);
+    } else {
+        assert(fabsf(status.target_cm - Q3_MINUS_CONTROL_TARGET_CM) < 0.01f);
+    }
 
     for (i = 0U; i < 40U; ++i) {
         advance_frame(20U, &capture_ms, -3.60f + 0.02f * (float) i);
         assert(q3_ball_get_status(&status) == ML_STATUS_OK);
         assert(status.state != Q3_STATE_MINUS_DRIVE);
-        assert(status.state == Q3_STATE_FINAL_CAPTURE);
-        assert(status.target_cm == Q3_FINAL_HOLD_TARGET_CM);
-        assert(status.final_capture_latched);
+        if (status.final_capture_latched) {
+            assert(fabsf(status.target_cm - Q3_FINAL_HOLD_TARGET_CM) < 0.01f);
+            assert((status.state == Q3_STATE_FINAL_CAPTURE) ||
+                (status.state == Q3_STATE_MINUS_BRAKE));
+        }
     }
 }
 
@@ -900,7 +969,7 @@ static void test_low_speed_final_capture_still_completes(void)
     advance_frame(40U, &capture_ms, -0.50f);
     advance_frame(40U, &capture_ms, -2.80f);
     advance_frame(40U, &capture_ms, -4.70f);
-    for (i = 0U; i < 120U; ++i) {
+    for (i = 0U; i < 60U; ++i) {
         advance_frame(20U, &capture_ms, -4.70f);
         assert(q3_ball_get_status(&status) == ML_STATUS_OK);
         if (status.state == Q3_STATE_COMPLETE) {
@@ -910,6 +979,66 @@ static void test_low_speed_final_capture_still_completes(void)
     assert(status.state == Q3_STATE_COMPLETE);
     assert(status.sequence_completed);
     assert(status.final_captured);
+    assert(status.sequence_elapsed_ms <
+        (Q3_SEQUENCE_TIMEOUT_MS - Q3_FINAL_CAPTURE_DEADLINE_WINDOW_MS));
+}
+
+static void test_final_capture_deadline_window_forces_complete(void)
+{
+    q3_ball_status_t status;
+    uint32_t capture_ms = start_and_reach_final_capture();
+    uint32_t i;
+    uint32_t deadline_target_ms =
+        Q3_SEQUENCE_TIMEOUT_MS - Q3_FINAL_CAPTURE_DEADLINE_WINDOW_MS;
+    bool reached_deadline_window = false;
+
+    assert(q3_ball_get_status(&status) == ML_STATUS_OK);
+    for (i = 0U; (status.sequence_elapsed_ms + 20U) < deadline_target_ms;
+         ++i) {
+        float position = ((i % 4U) == 3U) ? -4.19f : -4.55f;
+
+        advance_frame(20U, &capture_ms, position);
+        assert(q3_ball_get_status(&status) == ML_STATUS_OK);
+        assert(status.state == Q3_STATE_FINAL_CAPTURE);
+    }
+    if (status.sequence_elapsed_ms + 20U >= deadline_target_ms) {
+        reached_deadline_window = true;
+    }
+    assert(reached_deadline_window);
+
+    for (i = 0U; i < 12U; ++i) {
+        advance_frame(20U, &capture_ms, -4.55f);
+        assert(q3_ball_get_status(&status) == ML_STATUS_OK);
+        if (status.state == Q3_STATE_COMPLETE) {
+            break;
+        }
+        assert(status.state != Q3_STATE_TIMEOUT);
+    }
+    assert(status.state == Q3_STATE_COMPLETE);
+    assert(status.sequence_completed);
+    assert(status.final_captured);
+    assert(status.sequence_elapsed_ms >=
+        (Q3_SEQUENCE_TIMEOUT_MS - Q3_FINAL_CAPTURE_DEADLINE_WINDOW_MS));
+}
+
+static void test_final_capture_outside_band_still_times_out(void)
+{
+    q3_ball_status_t status;
+    uint32_t capture_ms = start_and_reach_final_capture();
+    uint32_t i;
+
+    for (i = 0U; i < 260U; ++i) {
+        advance_frame(20U, &capture_ms, -3.50f);
+        assert(q3_ball_get_status(&status) == ML_STATUS_OK);
+        if ((status.state == Q3_STATE_TIMEOUT) ||
+            (status.state == Q3_STATE_VISION_FAULT)) {
+            break;
+        }
+        assert(status.state != Q3_STATE_COMPLETE);
+    }
+    assert((status.state == Q3_STATE_TIMEOUT) ||
+        (status.state == Q3_STATE_VISION_FAULT));
+    assert(!status.sequence_completed);
 }
 
 static void test_map_calibration_and_abort(void)
@@ -990,6 +1119,7 @@ typedef struct {
     uint32_t formal_start_ms;
     bool formal_started;
     bool saw_rescue;
+    bool sticky_final_zone;
 } q3_test_plant_t;
 
 static float plant_abs(float value)
@@ -1033,6 +1163,11 @@ static void plant_step(q3_test_plant_t *plant, bool jitter_and_drop)
     rolling_threshold = direction >= 0.0f ? 25.0f : 30.0f;
     if ((direction > 0.0f) && (plant->position_cm > 1.55f) &&
         (plant->position_cm < 1.95f)) {
+        static_threshold = 145.0f;
+        local_trap = true;
+    } else if (plant->sticky_final_zone &&
+               (plant->position_cm > -4.05f) &&
+               (plant->position_cm < -3.05f)) {
         static_threshold = 145.0f;
         local_trap = true;
     }
@@ -1141,6 +1276,54 @@ static void test_closed_loop_bad_mechanics(void)
     assert(plant.saw_rescue);
 }
 
+static void test_closed_loop_final_capture_deadline_assist(void)
+{
+    q3_test_plant_t plant;
+    q3_ball_status_t status;
+    uint32_t elapsed;
+
+    reset_q3();
+    memset(&plant, 0, sizeof(plant));
+    plant.next_frame_ms = 1U;
+    plant.sticky_final_zone = true;
+    for (elapsed = 0U; elapsed < 8000U; ++elapsed) {
+        plant_step(&plant, true);
+        assert(q3_ball_get_status(&status) == ML_STATUS_OK);
+        if (status.state == Q3_STATE_READY) {
+            break;
+        }
+    }
+    assert(status.state == Q3_STATE_READY);
+    assert(plant_abs(plant.position_cm) <= 0.60f);
+    assert(q3_ball_start() == ML_STATUS_OK);
+    plant.formal_started = true;
+    plant.formal_start_ms = status.uptime_ms;
+    for (elapsed = 0U; elapsed < 5200U; ++elapsed) {
+        plant_step(&plant, true);
+        assert(q3_ball_get_status(&status) == ML_STATUS_OK);
+        if (status.state == Q3_STATE_COMPLETE) {
+            break;
+        }
+    }
+    if (status.state != Q3_STATE_COMPLETE) {
+        fprintf(stderr,
+            "deadline-assist state=%u x=%.3f v=%.3f t=%lu rescue=%u/%u plus=%u\n",
+            (unsigned) status.state, status.position_cm,
+            status.velocity_cm_per_s,
+            (unsigned long) status.sequence_elapsed_ms,
+            (unsigned) status.rescue_stage,
+            (unsigned) status.rescue_attempts,
+            status.plus_captured ? 1U : 0U);
+    }
+    assert(status.plus_captured);
+    assert(status.state == Q3_STATE_COMPLETE);
+    assert(status.sequence_completed);
+    assert(status.sequence_elapsed_ms <= Q3_SEQUENCE_TIMEOUT_MS);
+    assert(status.position_cm >= Q3_MINUS_VALID_MINIMUM_CM);
+    assert(status.position_cm <= Q3_MINUS_VALID_MAXIMUM_CM);
+    assert(plant.saw_rescue);
+}
+
 int main(void)
 {
     test_core_init_failure_stages();
@@ -1160,12 +1343,17 @@ int main(void)
     test_map_rescue_keeps_staged_sequence();
     test_minus_rescue_keeps_staged_sequence();
     test_fast_final_entry_latches_final_capture();
+    test_minus_high_speed_predicted_stop_brakes_early();
+    test_minus_soft_hold_keeps_high_speed_braking();
     test_final_capture_brakes_negative_crossing_in_place();
     test_final_capture_brakes_upper_edge_bounce_in_place();
     test_final_funnel_does_not_return_to_minus_drive();
     test_low_speed_final_capture_still_completes();
+    test_final_capture_deadline_window_forces_complete();
+    test_final_capture_outside_band_still_times_out();
     test_map_calibration_and_abort();
     test_vision_timeout_and_sequence_timeout();
     test_closed_loop_bad_mechanics();
+    test_closed_loop_final_capture_deadline_assist();
     return 0;
 }

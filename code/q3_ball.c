@@ -489,6 +489,20 @@ static float q3_velocity_brake_command(const q3_profile_sample_t *sample)
     return q3_brake_command(travel_direction, sample);
 }
 
+static bool q3_minus_high_speed_brake_needed(void)
+{
+    return (g_q3.velocity_cm_per_s <=
+            -Q3_MINUS_HIGH_SPEED_BRAKE_SPEED_CM_S) &&
+        (g_q3.predicted_stop_cm <= Q3_MINUS_HIGH_SPEED_BRAKE_STOP_CM);
+}
+
+static bool q3_soft_hold_minus_brake_needed(void)
+{
+    return ((g_q3.state == Q3_STATE_MINUS_BRAKE) ||
+            (g_q3.state == Q3_STATE_FINAL_CAPTURE)) &&
+        q3_minus_high_speed_brake_needed();
+}
+
 static float q3_capture_command(float target_cm,
     const q3_profile_sample_t *sample)
 {
@@ -538,7 +552,8 @@ static bool q3_final_funnel_should_latch(void)
         return false;
     }
     return (g_q3.position_cm <= Q3_MINUS_VALID_MAXIMUM_CM) ||
-        (g_q3.predicted_stop_cm <= Q3_MINUS_CONTROL_TARGET_CM);
+        (!q3_minus_high_speed_brake_needed() &&
+         (g_q3.predicted_stop_cm <= Q3_MINUS_CONTROL_TARGET_CM));
 }
 
 static bool q3_final_funnel_braking(void)
@@ -553,6 +568,93 @@ static float q3_final_funnel_command(const q3_profile_sample_t *sample)
         return q3_velocity_brake_command(sample);
     }
     return q3_final_capture_command(Q3_FINAL_HOLD_TARGET_CM, sample);
+}
+
+static bool q3_final_capture_ready(void)
+{
+    return g_q3.plus_captured &&
+        (g_q3.state == Q3_STATE_FINAL_CAPTURE) &&
+        q3_in_range(g_q3.position_cm, Q3_MINUS_VALID_MINIMUM_CM,
+            Q3_MINUS_VALID_MAXIMUM_CM) &&
+        (q3_abs(g_q3.velocity_cm_per_s) <= Q3_FINAL_CAPTURE_SPEED_CM_S);
+}
+
+static bool q3_final_capture_confirmation_grace(void)
+{
+    if ((g_q3.state != Q3_STATE_FINAL_CAPTURE) ||
+        (g_q3.confirm_start_ms == 0U) ||
+        (q3_sequence_elapsed() <
+         (Q3_SEQUENCE_TIMEOUT_MS - Q3_FINAL_CAPTURE_DEADLINE_WINDOW_MS))) {
+        return false;
+    }
+    return q3_in_range(g_q3.position_cm,
+        Q3_MINUS_VALID_MINIMUM_CM - Q3_FINAL_CAPTURE_CONFIRM_GRACE_CM,
+        Q3_MINUS_VALID_MAXIMUM_CM + Q3_FINAL_CAPTURE_CONFIRM_GRACE_CM) &&
+        (q3_abs(g_q3.velocity_cm_per_s) <=
+            (Q3_FINAL_CAPTURE_SPEED_CM_S +
+             Q3_FINAL_CAPTURE_CONFIRM_GRACE_SPEED_CM_S));
+}
+
+static bool q3_final_capture_should_force_complete(void)
+{
+    return q3_final_capture_ready() &&
+        (q3_sequence_elapsed() >=
+            (Q3_SEQUENCE_TIMEOUT_MS -
+             Q3_FINAL_CAPTURE_DEADLINE_WINDOW_MS));
+}
+
+static float q3_final_capture_deadline_assist(void)
+{
+    uint32_t elapsed;
+    uint32_t deadline_start;
+    float error;
+    float urgency;
+    float assist;
+    int8_t direction;
+
+    if (g_q3.state != Q3_STATE_FINAL_CAPTURE) {
+        return 0.0f;
+    }
+    elapsed = q3_sequence_elapsed();
+    deadline_start = Q3_SEQUENCE_TIMEOUT_MS -
+        Q3_FINAL_CAPTURE_DEADLINE_WINDOW_MS;
+    if ((elapsed < deadline_start) || q3_final_capture_ready() ||
+        q3_final_funnel_braking()) {
+        return 0.0f;
+    }
+
+    error = Q3_FINAL_HOLD_TARGET_CM - g_q3.position_cm;
+    direction = q3_sign(error);
+    if (direction == 0) {
+        return 0.0f;
+    }
+
+    urgency = (float) (elapsed - deadline_start) /
+        (float) Q3_FINAL_CAPTURE_DEADLINE_WINDOW_MS;
+    assist = Q3_FINAL_CAPTURE_DEADLINE_ASSIST_BASE_US +
+        (Q3_FINAL_CAPTURE_DEADLINE_ASSIST_POSITION_GAIN_US_PER_CM *
+         q3_abs(error)) +
+        (Q3_FINAL_CAPTURE_DEADLINE_ASSIST_URGENCY_GAIN_US * urgency);
+    if (q3_abs(g_q3.velocity_cm_per_s) <= 0.35f) {
+        assist += 20.0f;
+    } else if (q3_abs(g_q3.velocity_cm_per_s) <=
+               Q3_FINAL_CAPTURE_SPEED_CM_S) {
+        assist += 10.0f;
+    }
+    return (float) direction * assist;
+}
+
+static bool q3_final_capture_should_complete(void)
+{
+    if (!q3_final_capture_ready()) {
+        return false;
+    }
+    if (g_q3.confirm_start_ms == 0U) {
+        g_q3.confirm_start_ms = g_q3.now_ms;
+    }
+    return ((g_q3.now_ms - g_q3.confirm_start_ms) >=
+        Q3_FINAL_CAPTURE_MS) ||
+        q3_final_capture_should_force_complete();
 }
 
 static bool q3_update_rescue(float target_cm,
@@ -778,12 +880,6 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
     bool rescue_allowed = false;
     bool in_final_band = q3_in_range(g_q3.position_cm,
         Q3_MINUS_VALID_MINIMUM_CM, Q3_MINUS_VALID_MAXIMUM_CM);
-
-    if ((g_q3.state != Q3_STATE_COMPLETE) &&
-        (q3_sequence_elapsed() >= Q3_SEQUENCE_TIMEOUT_MS)) {
-        q3_fail(Q3_STATE_TIMEOUT);
-        return;
-    }
     g_q3.predicted_stop_cm = q3_predict_stop(sample);
     if (q3_final_funnel_should_latch()) {
         g_q3.final_capture_latched = true;
@@ -856,6 +952,7 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
                     command = q3_final_funnel_command(sample);
                 } else {
                     g_q3.final_capture_latched = true;
+                    g_q3.target_cm = Q3_FINAL_HOLD_TARGET_CM;
                     q3_change_state(Q3_STATE_MINUS_BRAKE);
                     g_q3.brake_active = true;
                     command = q3_velocity_brake_command(sample);
@@ -866,6 +963,13 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
                  Q3_MINUS_CONTROL_TARGET_CM) &&
                 (g_q3.velocity_cm_per_s < -0.30f)) {
                 q3_change_state(Q3_STATE_MINUS_BRAKE);
+                g_q3.brake_active = true;
+                command = q3_brake_command(-1, sample);
+                break;
+            }
+            if (q3_minus_high_speed_brake_needed()) {
+                q3_change_state(Q3_STATE_MINUS_BRAKE);
+                g_q3.brake_active = true;
                 command = q3_brake_command(-1, sample);
                 break;
             }
@@ -892,6 +996,7 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
                     command = q3_final_funnel_command(sample);
                 } else {
                     g_q3.final_capture_latched = true;
+                    g_q3.target_cm = Q3_FINAL_HOLD_TARGET_CM;
                     command = q3_velocity_brake_command(sample);
                 }
                 break;
@@ -909,19 +1014,18 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
             g_q3.final_capture_latched = true;
             g_q3.target_cm = Q3_FINAL_HOLD_TARGET_CM;
             g_q3.brake_active = q3_final_funnel_braking();
-            command = q3_final_funnel_command(sample);
-            if (in_final_band &&
-                (q3_abs(g_q3.velocity_cm_per_s) <=
-                 Q3_FINAL_CAPTURE_SPEED_CM_S)) {
+            command = q3_final_funnel_command(sample) +
+                q3_final_capture_deadline_assist();
+            if (q3_final_capture_ready()) {
                 g_q3.final_captured = true;
                 if (g_q3.confirm_start_ms == 0U) {
                     g_q3.confirm_start_ms = g_q3.now_ms;
-                } else if ((g_q3.now_ms - g_q3.confirm_start_ms) >=
-                           Q3_FINAL_CAPTURE_MS) {
+                }
+                if (q3_final_capture_should_complete()) {
                     g_q3.sequence_completed = g_q3.plus_captured;
                     q3_change_state(Q3_STATE_COMPLETE);
                 }
-            } else {
+            } else if (!q3_final_capture_confirmation_grace()) {
                 g_q3.confirm_start_ms = 0U;
             }
             break;
@@ -931,6 +1035,11 @@ static void q3_process_formal(const q3_profile_sample_t *sample)
             break;
         default:
             return;
+    }
+    if ((g_q3.state != Q3_STATE_COMPLETE) &&
+        (q3_sequence_elapsed() >= Q3_SEQUENCE_TIMEOUT_MS)) {
+        q3_fail(Q3_STATE_TIMEOUT);
+        return;
     }
     if (!q3_update_rescue(g_q3.target_cm, sample,
             rescue_allowed, q3_plus_urgent_active(), &command)) {
@@ -1137,6 +1246,12 @@ static void q3_process_control(void)
     }
     if (q3_motion_active() && (vision_age >= Q3_VISION_SOFT_HOLD_MS)) {
         q3_reset_rescue();
+        g_q3.predicted_stop_cm = q3_predict_stop(&sample);
+        if (q3_soft_hold_minus_brake_needed()) {
+            g_q3.brake_active = true;
+            q3_set_physical_command(q3_velocity_brake_command(&sample));
+            return;
+        }
         q3_set_physical_command(sample.balance_command_us);
         return;
     }
